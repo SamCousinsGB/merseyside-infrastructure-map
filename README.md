@@ -15,9 +15,10 @@ Each layer toggles independently (top-right control). One colour per category;
 |-------|----------|
 | **Power** | Electricity substations, overhead lines and underground cables (SP Manweb network) |
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
-| **Water** | Reservoirs, dams, water treatment works, water towers, clean-water pumping stations |
+| **Water** | Reservoirs, dams, water treatment works, towers, clean-water pumping stations, and **water pipelines** |
 | **Sewage** | Wastewater treatment works + sewage pumping stations |
-| **Pipes** | Gas, oil, water and petrochemical pipelines |
+| **Gas** | Gas pipelines |
+| **Oil & chemicals** | Oil, fuel and petrochemical pipelines (e.g. Stanlow) |
 
 Switchable basemaps: Street (OSM), Satellite, Satellite + labels, Topographic,
 and a clean Carto style.

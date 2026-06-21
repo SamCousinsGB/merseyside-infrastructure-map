@@ -142,9 +142,17 @@ def load_infra(geom_path="infra_geom.json", probe_path="infra_probe.json"):
                 coords = [[x["lon"], x["lat"]] for x in g]
                 if t.get("man_made") == "pipeline":
                     sub = t.get("substance", "")
+                    # route pipes into their utility: water -> Water, gas -> Gas,
+                    # oil / fuel / petrochemical -> Oil & chemicals
+                    if sub in ("water", "rainwater"):
+                        pcat = "water"
+                    elif sub == "gas":
+                        pcat = "gas"
+                    else:
+                        pcat = "fuel"
                     out.append(feat({"type": "LineString", "coordinates": coords},
-                                    **base, cat="pipe", substance=sub,
-                                    kind="pipeline" + (f" ({sub})" if sub else ""),
+                                    **base, cat=pcat, substance=sub,
+                                    kind=(f"{sub} pipeline" if sub else "pipeline"),
                                     ug=t.get("location") == "underground"
                                        or t.get("tunnel") in ("yes", "culvert")))
                 elif t.get("waterway") == "dam":
@@ -234,9 +242,10 @@ const CAT={
   train :{c:'#333333',label:'Trains'},
   water :{c:'#1ba3c6',label:'Water'},
   sewage:{c:'#8a6d3b',label:'Sewage'},
-  pipe  :{c:'#9b27b0',label:'Pipes'},
+  gas   :{c:'#d9730d',label:'Gas'},
+  fuel  :{c:'#9b27b0',label:'Oil &amp; chemicals'},
 };
-const ORDER=['power','train','water','sewage','pipe'];
+const ORDER=['power','train','water','sewage','gas','fuel'];
 const map=L.map('map',{preferCanvas:true,maxZoom:19});
 const bases={
   'Street (OSM)':L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
