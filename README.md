@@ -4,7 +4,7 @@ An interactive Leaflet map of utility and transport infrastructure across the
 SP Manweb region (Merseyside, Wirral, Cheshire and North Wales), built from
 OpenStreetMap-derived data.
 
-**Live map:** https://USERNAME.github.io/REPO/  <!-- updated once Pages is live -->
+**Live map:** https://samcousinsgb.github.io/merseyside-infrastructure-map/
 
 ## Layers
 
