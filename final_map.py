@@ -281,17 +281,17 @@ function catLayer(cat){const col=CAT[cat].c;
     onEachFeature:(f,l)=>l.bindPopup(pop(f.properties)),
   });}
 
-// Trains layer also carries labelled markers for the 6 traction supply points.
-const trainGroup=L.featureGroup([catLayer('train')]);
+// One toggleable layer per category, built straight from ORDER so the two
+// can never drift out of sync.
+const layers={};
+ORDER.forEach(k=>{layers[k]=catLayer(k);});
+// The Trains layer also carries labelled markers for the 6 traction points.
 data.features.filter(f=>f.properties.traction).forEach(f=>{
   const c=L.geoJSON(f).getBounds().getCenter();
   L.circleMarker(c,{radius:7,color:'#0a7d2c',weight:2,fillColor:'#2ee06a',fillOpacity:.95})
     .bindTooltip(f.properties.label,{permanent:true,direction:'top',className:'lab',offset:[0,-7]})
-    .bindPopup(pop(f.properties)).addTo(trainGroup);
+    .bindPopup(pop(f.properties)).addTo(layers.train);
 });
-
-const layers={power:catLayer('power'),train:trainGroup,water:catLayer('water'),
-              sewage:catLayer('sewage'),pipe:catLayer('pipe')};
 ORDER.forEach(k=>layers[k].addTo(map));
 const overlays={};
 ORDER.forEach(k=>overlays[`<span class="ln" style="border-color:${CAT[k].c}"></span>${CAT[k].label}`]=layers[k]);

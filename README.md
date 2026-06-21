@@ -29,7 +29,8 @@ The published `index.html` is fully self-contained (all data is embedded). To
 regenerate it from the source data:
 
 ```bash
-python final_map.py   # reads the *.geojson / *.json inputs, writes index.html
+python final_map.py        # reads the *.geojson / *.json inputs, writes index.html
+node test_map.js index.html  # smoke-test: runs the page JS against the real data
 ```
 
 ### Source data
