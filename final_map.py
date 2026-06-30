@@ -326,6 +326,30 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .gm{display:flex;gap:14px;margin-top:8px;padding-top:7px;border-top:1px solid #eee}
 .gm a{color:#1a73e8;font-weight:600;text-decoration:none;font-size:12px}
 .gm a:hover{text-decoration:underline}
+/* === ADDITIONS to the existing <style> block ================================
+   The existing .fx-* rules are already generic (.fx-group / .fx-subs /
+   .fx-chip.parent select by class, colour comes from inline --c), so N stacked
+   groups need NO structural change. Keep .fx-rag / .fx-rag.is-on / .fx-cap /
+   .fx-rag-legend EXACTLY as they are. Add only the following: */
+
+/* HV-labels toggle: a plain .fx-cap switch that lives in the power drawer ABOVE
+   the LV-gated .fx-rag block, so it is always visible (HV is independent of LV). */
+.fx-labtog{margin-top:8px}
+
+/* HV permanent-tooltip labels (openinframap-style): small, dark, unobtrusive,
+   no bubble chrome, white halo for legibility on any basemap, non-interactive so
+   they never intercept clicks/popups. A dedicated class so they don't collide
+   with the existing .lab (traction) / .tt (popup) styles. */
+.hv-lab{
+  background:transparent;border:none;box-shadow:none;padding:0;margin:0;
+  color:#1c2733;
+  font:600 10.5px/1.1 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 1px 2px #fff;
+  white-space:nowrap;pointer-events:none;
+}
+.hv-lab:before{display:none}                 /* kill Leaflet's tooltip arrow */
+.hv-lab.hv-lab-mw{color:#5b1a12}             /* power-station MW labels: oxblood */
+.hv-lab.hv-lab-line{color:#3a2350;font-weight:500}  /* line/cable labels: purple, lighter */
 </style>
 </head><body><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -381,26 +405,104 @@ function catLayer(cat){const col=CAT[cat].c;
       L.popup().setLatLng(ll).setContent(pop(f.properties)+gmaps(ll.lat,ll.lng)).openOn(map);}),
   });}
 
-// One toggleable layer per category, built straight from ORDER so the two
-// can never drift out of sync.
-const layers={};
-ORDER.forEach(k=>{layers[k]=catLayer(k);});
-// The Trains layer also carries labelled markers for the 6 traction points.
+// ============================================================================
+//  SUB-CATEGORY LAYERS  (built BEFORE the control mounts; never undefined)
+//  Replaces the old:
+//     const layers={}; ORDER.forEach(k=>{layers[k]=catLayer(k);});
+//     ...traction markers onto layers.train...
+//     ORDER.forEach(k=>layers[k].addTo(map));
+//  and the old extra_infra merge block.
+//  Each predicate-backed child is its own canvas L.geoJSON reusing catLayer()'s
+//  exact style/pointToLayer/click so visuals + popups are byte-identical.
+// ============================================================================
+
+// ---- predicates: pure functions of geometry-type + kind (no re-classify) ----
+const geomType = f => (f.geometry && f.geometry.type) || '';
+const isLine   = f => /LineString/.test(geomType(f));            // LineString | MultiLineString
+const kindOf   = f => (f.properties.kind || '').toLowerCase();
+const WATER_PIPE = f => isLine(f) && /pipe|aqueduct|main/.test(kindOf(f)) && !/dam/.test(kindOf(f));
+
+// Per-category ordered child predicates. First match wins; the LAST child in
+// each category is the catch-all "else", so every cat feature lands in exactly
+// one sub-layer and nothing is ever dropped or duplicated.
+const SUBPRED = {
+  power : { 'power.ps'  : f => /power station/.test(kindOf(f)),
+            'power.hv'  : f => true },                                   // else: substation/line/cable/minor_line
+  fuel  : { 'fuel.pipe' : f => isLine(f),
+            'fuel.tank' : f => true },                                   // else: tanks(Polygon)+chimneys(Point)
+  gas   : { 'gas.pipe'  : f => isLine(f),
+            'gas.hold'  : f => true },                                   // else: gas holders
+  water : { 'water.pipe': f => WATER_PIPE(f),
+            'water.site': f => true },                                   // else: reservoirs/dams/works/towers/pumping/tanks/weirs
+  sewage: { 'sewage.pipe': f => isLine(f),
+            'sewage.site': f => true },                                  // else: works/pumping/tanks
+};
+const SUBKEYS = {                                  // ordered child keys per cat
+  power:['power.ps','power.hv'], fuel:['fuel.pipe','fuel.tank'],
+  gas:['gas.pipe','gas.hold'],  water:['water.pipe','water.site'],
+  sewage:['sewage.pipe','sewage.site'],
+};
+// Resolve which child sub-key a feature of category `cat` belongs to (or null).
+function subKeyFor(cat, f){
+  const preds = SUBPRED[cat]; if(!preds) return null;     // train -> no group
+  for(const key of SUBKEYS[cat]){ if(preds[key](f)) return key; }
+  return SUBKEYS[cat][SUBKEYS[cat].length-1];             // safety net (never hit: last is else)
+}
+
+// ---- factory: identical look & popups as catLayer, seeded with a feature list -
+function subLayer(cat, feats){
+  const col = CAT[cat].c;
+  return L.geoJSON({type:'FeatureCollection',features:feats},{
+    style:f=>{const p=f.properties;
+      return{color:col,weight:p.kind==='cable'?3.5:2.5,opacity:.9,
+        dashArray:p.ug?'5 5':null,fillColor:col,fillOpacity:.4};},
+    pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:col,fillOpacity:.95}),
+    onEachFeature:(f,l)=>l.on('click',e=>{
+      const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+      L.popup().setLatLng(ll).setContent(pop(f.properties)+gmaps(ll.lat,ll.lng)).openOn(map);}),
+  });
+}
+
+// ---- build sub-layers (grouped cats) + the flat train layer ------------------
+const GROUPED = Object.keys(SUBKEYS);                       // power,fuel,gas,water,sewage
+const sub = {};                                            // dotted key -> L.geoJSON
+// embedded data already carries power=plant (kind "plant"); skip those so the
+// extra_infra power stations (which have name + MW output) are what we render.
+const isEmbeddedPlant = f => f.properties.cat==="power" && /plant/.test((f.properties.kind||"").toLowerCase());
+GROUPED.forEach(cat=>{
+  const buckets = {}; SUBKEYS[cat].forEach(k=>buckets[k]=[]);
+  data.features.forEach(f=>{ if(f.properties.cat===cat && !isEmbeddedPlant(f)) buckets[subKeyFor(cat,f)].push(f); });
+  SUBKEYS[cat].forEach(k=>{ sub[k] = subLayer(cat, buckets[k]); });
+});
+
+// Trains: keep the original single flat layer + its traction markers.
+const layers = { train: catLayer('train') };
 data.features.filter(f=>f.properties.traction).forEach(f=>{
   const c=L.geoJSON(f).getBounds().getCenter();
   L.circleMarker(c,{radius:7,color:'#15202B',weight:2,fillColor:'#00C2A8',fillOpacity:.95})
     .bindPopup(pop(f.properties)+gmaps(c.lat,c.lng)).addTo(layers.train);
 });
-ORDER.forEach(k=>layers[k].addTo(map));
 
-// Extra OSM infrastructure (full pipeline routes, tank farms, gas holders, power
-// stations, chimneys, weirs) fetched at runtime and merged into the relevant
-// utility layers by category, de-duplicated by OSM id.
-const _extraIds=new Set(data.features.map(f=>f.properties.id));
+// ---- ADD DEFAULT-ON LAYERS: all sub-layers + train. lvNetwork stays OFF. -----
+GROUPED.forEach(cat=>SUBKEYS[cat].forEach(k=>sub[k].addTo(map)));
+layers.train.addTo(map);
+
+// ---- runtime extra_infra merge: route each feature into its SUB-layer --------
+const _extraIds=new Set(data.features.filter(f=>!isEmbeddedPlant(f)).map(f=>f.properties.id));
 fetch('extra_infra.geojson').then(r=>r.json()).then(fc=>{
-  for(const f of fc.features){const p=f.properties; if(_extraIds.has(p.id))continue; _extraIds.add(p.id);
-    if(layers[p.cat]) layers[p.cat].addData(f);}
+  for(const f of fc.features){
+    const p=f.properties; if(_extraIds.has(p.id))continue; _extraIds.add(p.id);
+    if(p.cat==='train'){ layers.train.addData(f); continue; }
+    const k = subKeyFor(p.cat,f);
+    if(k && sub[k]) sub[k].addData(f);          // guarded: never addData on undefined
+  }
+  // power stations arrive here -> refresh labels if they're currently shown
+  if(hvLabelsOn) buildHvLabels();
 }).catch(()=>{});
+
+// ---- fitBounds: open on the real Merseyside / N Wales footprint (raw HV bounds
+//      include stray Scotland-area features that would zoom out to ~z7).
+map.fitBounds([[52.95,-4.90],[53.72,-2.45]]);
 
 // ---- LV (low-voltage) network ------------------------------------------------
 // SP Energy Networks "ConnectMore" data, kept local. Two parts, off by default:
@@ -501,11 +603,12 @@ function updateLvHint(){
   if(show && !lvHint._map) lvHint.addTo(map);
   else if(!show && lvHint._map) lvHint.remove();
 }
+lvNetwork.addTo(map);   // LV on by default (all sub-categories enabled)
 
 // ---- Layer control: custom "LayerDeck" (Power group -> HV + LV) -------------
 const FX = {
   hv:'#6A2FBF', lv:'#22B8D9',
-  train:'#2B2F36', water:'#1C8FB0', sewage:'#8A6A45', gas:'#E8730C', fuel:'#C026A8',
+  train:'#2B2F36', water:'#1C8FB0', sewage:'#8A6A45', gas:'#E8730C', fuel:'#C026A8', power:'#6A2FBF',
 };
 const FX_RAGC = { g:'#2E9E5B', a:'#E8A317', r:'#D5392B', x:'#9AA0A6' };
 const ICON = {
@@ -516,17 +619,138 @@ const ICON = {
   sewage:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
   gas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s5 4.5 5 9a5 5 0 0 1-10 0c0-1.7.8-3.2 1.5-4.2C9.5 9 12 7 12 3z"/></svg>',
   fuel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v15M3 20h13M14 9h2.5a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg>',
+  station:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10l5-3v3l5-3v14M9 21v-4h4v4"/></svg>',
+  pipe:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M6 9v6M18 9v6"/></svg>',
+  tank:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M4 12h16"/></svg>',
 };
 const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+// ============================================================================
+//  HV LABELS (openinframap.org style, toggleable, viewport-windowed + zoom-gated)
+//   - substations    : "Name 132 kV"      (voltage/1000)
+//   - lines/cables    : "Name (132 kV)"
+//   - power stations  : "Name  1380 MW"   (tags['plant:output:electricity'])
+//  Only NAMED features get a label. OFF by default; built lazily on first enable.
+//  Performance: a dedicated pane + L.layerGroup of permanent tooltips, rebuilt on
+//  moveend but ONLY for named features in the padded viewport and at zoom >= 13,
+//  with a hard cap. This mirrors the existing LV cable/transformer windowing, so
+//  even with ~638 named HV features only the dozens on screen ever mount. The
+//  moveend handler is a no-op while the toggle is off (zero cost when unused).
+//  Place this block ABOVE the `new LeafLayerDeck(...)` call so setHvLabels exists.
+// ============================================================================
+const HV_LAB_MINZOOM = 13;        // below this: no labels (clean + fast)
+const HV_LAB_CAP     = 400;       // hard safety cap on simultaneously-mounted labels
+let hvLabelsOn   = false;         // toggle state (also read by the extra_infra merge)
+let hvLabelLayer = null;          // L.layerGroup of permanent tooltips (in its own pane)
+let hvLabelPane  = null;
+
+function ensureHvPane(){
+  if(hvLabelPane) return;
+  hvLabelPane = map.createPane('hvLabels');
+  hvLabelPane.style.zIndex = 640;            // above overlay/markers, below popups(700)
+  hvLabelPane.style.pointerEvents = 'none';
+}
+
+// "132000" -> "132 kV" (handles "132000;33000" -> highest). '' if unknown.
+function kvText(volts){
+  if(!volts) return '';
+  const v = String(volts).split(/[;,]/).map(s=>parseInt(s,10)).filter(n=>n>0);
+  if(!v.length) return '';
+  const kv = Math.max.apply(null, v)/1000;
+  return (Math.round(kv*10)/10) + ' kV';
+}
+
+// Pull named-feature label descriptors live from the HV + power-station sub-layers,
+// so runtime-merged stations are covered. Returns [{ll,text,cls}, ...].
+function hvLabelDescriptors(){
+  const out = [];
+  const pull = (lyr, isStation) => {
+    if(!lyr) return;
+    lyr.eachLayer(l => {
+      const f = l.feature; if(!f) return;
+      const p = f.properties; if(!p || !p.name) return;   // only named
+      let text, cls;
+      if(isStation){
+        const mw = (p.tags && p.tags['plant:output:electricity']) || '';
+        text = mw ? (p.name + '  ' + mw) : p.name;         // "Name  1380 MW"
+        cls  = 'hv-lab hv-lab-mw';
+      } else {
+        const kv = kvText(p.voltage);
+        const k  = (p.kind||'').toLowerCase();
+        if(/substation|station|transformer/.test(k)){
+          text = kv ? (p.name + ' ' + kv) : p.name;        // "Name 132 kV"
+          cls  = 'hv-lab';
+        } else {                                           // line / cable / minor_line
+          text = kv ? (p.name + ' (' + kv + ')') : p.name; // "Name (132 kV)"
+          cls  = 'hv-lab hv-lab-line';
+        }
+      }
+      // anchor: marker latlng, else polyline midpoint, else bounds centre
+      let ll = (l.getLatLng && l.getLatLng());
+      if(!ll && l.getCenter){ try{ ll = l.getCenter(); }catch(e){} }
+      if(!ll && l.getBounds){ try{ ll = l.getBounds().getCenter(); }catch(e){} }
+      if(ll) out.push({ ll, text, cls });
+    });
+  };
+  pull(sub['power.hv'], false);
+  pull(sub['power.ps'], true);
+  return out;
+}
+
+// Build/refresh the windowed label set. Cheap to fully rebuild on each moveend.
+function buildHvLabels(){
+  if(!hvLabelsOn) return;
+  ensureHvPane();
+  if(!hvLabelLayer) hvLabelLayer = L.layerGroup([], {pane:'hvLabels'});
+  if(!map.hasLayer(hvLabelLayer)) hvLabelLayer.addTo(map);
+  hvLabelLayer.clearLayers();
+  // labels follow the HV network: hide entirely if HV layer is off or zoomed out
+  if(map.getZoom() < HV_LAB_MINZOOM || !map.hasLayer(sub['power.hv'])) return;
+  const b = map.getBounds().pad(0.15);
+  let n = 0;
+  for(const it of hvLabelDescriptors()){
+    if(!b.contains(it.ll)) continue;
+    L.tooltip({permanent:true, direction:'right', offset:[6,0],
+               className:it.cls, opacity:1, pane:'hvLabels', interactive:false})
+      .setLatLng(it.ll).setContent(it.text).addTo(hvLabelLayer);
+    if(++n >= HV_LAB_CAP) break;
+  }
+}
+
+// public toggle wired into the control as cfg.onHvLabels
+function setHvLabels(on){
+  hvLabelsOn = on;
+  ensureHvPane();
+  if(!hvLabelLayer) hvLabelLayer = L.layerGroup([], {pane:'hvLabels'});
+  if(on){ buildHvLabels(); }
+  else {
+    hvLabelLayer.clearLayers();
+    if(map.hasLayer(hvLabelLayer)) map.removeLayer(hvLabelLayer);
+  }
+}
+
+// re-window on pan/zoom, mirroring the LV layers; no cost while toggle is off.
+map.on('moveend', () => { if(hvLabelsOn) buildHvLabels(); });
+
+// ============================================================================
+//  GENERALIZED LayerDeck — N Power-style groups + flat leaves, data-driven.
+//  Drop-in replacement for the whole `const LeafLayerDeck = L.Control.extend({...})`
+//  block AND its instantiation `new LeafLayerDeck({...}).addTo(map)`.
+//  Robust: every child resolves to a real layer (chips with no layer are filtered
+//  out -> m.hasLayer(undefined) is impossible). Drawer height via measure()
+//  (height:auto), never live scrollHeight -> no padding feedback loop.
+// ============================================================================
 const LeafLayerDeck = L.Control.extend({
   options:{ position:'topright' },
   initialize:function(cfg, opts){ L.setOptions(this, opts||{}); this._cfg = cfg; },
+
   onAdd:function(){
     const cfg = this._cfg, m = cfg.map;
     const root = L.DomUtil.create('div','fx-deck');
     L.DomEvent.disableClickPropagation(root);
     L.DomEvent.disableScrollPropagation(root);
     root.innerHTML = this._template(cfg);
+
+    // ---- basemap segmented control (unchanged) ----
     const baseNames = Object.keys(cfg.bases);
     root.querySelectorAll('[data-base]').forEach(el => {
       L.DomEvent.on(el, 'click', () => {
@@ -537,74 +761,103 @@ const LeafLayerDeck = L.Control.extend({
         root.querySelectorAll('[data-base]').forEach(b => b.classList.toggle('on', b === el));
       });
     });
-    const leafMap = { train:cfg.layers.train, water:cfg.layers.water,
-                      sewage:cfg.layers.sewage, gas:cfg.layers.gas, fuel:cfg.layers.fuel };
-    root.querySelectorAll('.fx-chip[data-leaf]').forEach(chip => {
-      const layer = leafMap[chip.getAttribute('data-leaf')];
-      chip.classList.toggle('on', m.hasLayer(layer));
-      L.DomEvent.on(chip, 'click', () => this._toggle(chip, layer, m));
+
+    // ---- flat leaves (Trains) ----
+    cfg.leaves.forEach(leaf => {
+      const chip = root.querySelector('.fx-chip[data-leaf="'+leaf.key+'"]');
+      if(!chip || !leaf.layer) return;                 // robustness: never wire undefined
+      chip.classList.toggle('on', m.hasLayer(leaf.layer));
+      L.DomEvent.on(chip, 'click', () => this._toggle(chip, leaf.layer, m));
     });
-    this._wirePower(root, m, cfg);
+
+    // ---- groups ----
+    cfg.groups.forEach(g => this._wireGroup(root, m, cfg, g));
     return root;
   },
+
   _toggle:function(chip, layer, m){
+    if(!layer) return;
     if (m.hasLayer(layer)) { m.removeLayer(layer); chip.classList.remove('on'); }
     else {
       m.addLayer(layer); chip.classList.add('on');
       chip.classList.add('pulse'); setTimeout(() => chip.classList.remove('pulse'), 440);
     }
   },
-  _wirePower:function(root, m, cfg){
-    const group  = root.querySelector('[data-power]');
+
+  // ---- generic group wiring (refactor of the old _wirePower) ------------------
+  _wireGroup:function(root, m, cfg, g){
+    const group  = root.querySelector('[data-group="'+g.key+'"]');
     const parent = group.querySelector('.fx-chip.parent');
     const drawer = group.querySelector('.fx-subs');
-    const hvChip = group.querySelector('[data-child="hv"]');
-    const lvChip = group.querySelector('[data-child="lv"]');
-    const legend = group.querySelector('[data-rag]');
-    const HV = cfg.layers.power, LV = cfg.lvNetwork;
-    // measure the drawer's natural content height (briefly at height:auto) instead
-    // of scrollHeight, which includes padding and never shrinks -> the old code grew
-    // the drawer 8px per toggle and never collapsed it back.
+    // children that actually resolved to a layer (defensive)
+    const kids = g.children
+      .map(c => ({ def:c, chip:group.querySelector('.fx-chip[data-child="'+c.key+'"]') }))
+      .filter(o => o.chip && o.def.layer);
+
+    // measure natural content height at height:auto (NOT live scrollHeight, which
+    // double-counts padding and never shrinks -> the historical drawer-growth bug).
     const measure = () => { const p=drawer.style.height; drawer.style.height='auto'; const h=drawer.scrollHeight; drawer.style.height=p; return h; };
+    const reflow  = () => { if (group.classList.contains('open')) drawer.style.height = measure() + 'px'; };
+
     const refreshParent = () => {
-      const hvOn = m.hasLayer(HV), lvOn = m.hasLayer(LV);
-      hvChip.classList.toggle('on', hvOn);
-      lvChip.classList.toggle('on', lvOn);
-      legend.classList.toggle('is-on', lvOn);
+      let on=0; const total=kids.length;
+      kids.forEach(k => { const is=m.hasLayer(k.def.layer); k.chip.classList.toggle('on', is); if(is) on++; });
       parent.classList.remove('on','partial');
-      if (hvOn && lvOn) parent.classList.add('on');
-      else if (hvOn || lvOn) parent.classList.add('partial');
-      if (group.classList.contains('open'))
-        drawer.style.height = measure() + 'px';
+      if (on===total && total>0) parent.classList.add('on');
+      else if (on>0)             parent.classList.add('partial');
+      // power group only: LV RAG legend visible while LV child is on
+      const legend = group.querySelector('[data-rag]');
+      if (legend) legend.classList.toggle('is-on', m.hasLayer(cfg.lvNetwork));
+      reflow();
     };
+
     const setOpen = (o) => {
       group.classList.toggle('open', o);
       drawer.style.height = o ? measure() + 'px' : '0px';
     };
+
+    // chevron = disclosure only
     L.DomEvent.on(parent.querySelector('.fx-disc'), 'click', (e) => {
       L.DomEvent.stop(e); setOpen(!group.classList.contains('open'));
     });
+    // master puck: any on -> all off; none on -> all on (+open)
     L.DomEvent.on(parent.querySelector('.fx-puck'), 'click', (e) => {
       L.DomEvent.stop(e);
-      const anyOn = m.hasLayer(HV) || m.hasLayer(LV);
-      if (anyOn) { m.removeLayer(HV); m.removeLayer(LV); }
-      else { m.addLayer(HV); m.addLayer(LV); setOpen(true); }
+      const anyOn = kids.some(k => m.hasLayer(k.def.layer));
+      if (anyOn) kids.forEach(k => { if(m.hasLayer(k.def.layer)) m.removeLayer(k.def.layer); });
+      else { kids.forEach(k => { if(!m.hasLayer(k.def.layer)) m.addLayer(k.def.layer); }); setOpen(true); }
       refreshParent();
     });
-    L.DomEvent.on(hvChip, 'click', () => { this._toggle(hvChip, HV, m); refreshParent(); });
-    L.DomEvent.on(lvChip, 'click', () => { this._toggle(lvChip, LV, m); refreshParent(); });
+    // individual children
+    kids.forEach(k => L.DomEvent.on(k.chip, 'click', () => { this._toggle(k.chip, k.def.layer, m); refreshParent(); }));
+
+    // ---- extras inside this group's drawer ----
+    // HV labels toggle (always visible; sits OUTSIDE the LV-gated .fx-rag block)
+    const labtog = group.querySelector('[data-labtog]');
+    if (labtog) L.DomEvent.on(labtog, 'click', (e) => {
+      L.DomEvent.stop(e);
+      const on = !labtog.classList.contains('on');
+      labtog.classList.toggle('on', on);
+      cfg.onHvLabels && cfg.onHvLabels(on);
+      reflow();
+    });
+    // LV capacity toggle (inside .fx-rag; unchanged behaviour)
     const captog = group.querySelector('[data-captog]');
-    L.DomEvent.on(captog, 'click', (e) => {
+    if (captog) L.DomEvent.on(captog, 'click', (e) => {
       L.DomEvent.stop(e);
       const on = !captog.classList.contains('on');
       captog.classList.toggle('on', on);
-      legend.classList.toggle('cap-on', on);
+      const legend = group.querySelector('[data-rag]');
+      if (legend) legend.classList.toggle('cap-on', on);
       cfg.onCapacity && cfg.onCapacity(on);
-      if (group.classList.contains('open')) drawer.style.height = measure() + 'px';
+      reflow();
     });
+
     refreshParent();
-    requestAnimationFrame(() => setOpen(m.hasLayer(HV) || m.hasLayer(LV)));
+    // open groups that start with any child on (all grouped children default ON)
+    requestAnimationFrame(() => setOpen(kids.some(k => m.hasLayer(k.def.layer))));
   },
+
   _chip:function(key, label, icon, color, attr){
     return `<button class="fx-chip" ${attr}="${key}" style="--c:${color}">
       <span class="fx-puck">${icon}</span>
@@ -613,55 +866,91 @@ const LeafLayerDeck = L.Control.extend({
       <span class="fx-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-12"/></svg></span>
     </button>`;
   },
+
+  // per-group extras HTML (power only). HV-labels toggle is rendered BEFORE the
+  // .fx-rag block so it stays visible regardless of LV state.
+  _extrasHtml:function(g){
+    if (g.key !== 'power') return '';
+    return `
+      <button class="fx-cap fx-labtog" data-labtog><span class="fx-cap-sw"></span>HV labels (kV / MW)</button>
+      <div class="fx-rag" data-rag>
+        <div class="fx-rag-tx"><i style="background:#FFC400;border-color:#3A2E00"></i>Transformer (substation)</div>
+        <button class="fx-cap" data-captog><span class="fx-cap-sw"></span>Colour cables by capacity</button>
+        <div class="fx-rag-legend">
+          <div class="fx-rag-bar"></div>
+          <div class="fx-rag-rows">
+            <span><i style="background:${FX_RAGC.g}"></i>Spare</span>
+            <span><i style="background:${FX_RAGC.a}"></i>Limited</span>
+            <span><i style="background:${FX_RAGC.r}"></i>At capacity</span>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  _groupHtml:function(g){
+    const childChips = g.children
+      .map(c => this._chip(c.key, c.label, c.icon, c.color, 'data-child')).join('\n');
+    return `
+      <div class="fx-group" data-group="${g.key}">
+        <button class="fx-chip parent" style="--c:${g.color}">
+          <span class="fx-puck">${g.icon}</span>
+          <span class="fx-name">${g.label}</span>
+          <span class="fx-disc" title="Show / hide ${g.label}">${CHEV}</span>
+        </button>
+        <div class="fx-subs">
+          ${childChips}
+          ${this._extrasHtml(g)}
+        </div>
+      </div>`;
+  },
+
   _template:function(cfg){
     const baseChips = Object.keys(cfg.bases).map((n,i) =>
       `<button class="fx-base${(n===cfg.baseDefault)||(cfg.baseDefault==null&&i===0)?' on':''}" data-base="${n}" title="${n}">${n.replace(/\s*\(.*\)$/,'').replace('Satellite + labels','Sat + labels')}</button>`
     ).join('');
-    const leaves = [
-      ['train','Trains',ICON.train,FX.train],
-      ['water','Water',ICON.water,FX.water],
-      ['sewage','Sewage',ICON.sewage,FX.sewage],
-      ['gas','Gas',ICON.gas,FX.gas],
-      ['fuel','Oil &amp; chemicals',ICON.fuel,FX.fuel],
-    ].map(([k,l,ic,c]) => this._chip(k,l,ic,c,'data-leaf')).join('');
+    const groupsHtml = cfg.groups.map(g => this._groupHtml(g)).join('\n');
+    const leafChips  = cfg.leaves.map(l => this._chip(l.key, l.label, l.icon, l.color, 'data-leaf')).join('\n');
     return `
       <div class="fx-head"><span class="fx-title">Layers</span></div>
       <div class="fx-eyebrow">Basemap</div>
       <div class="fx-seg">${baseChips}</div>
       <div class="fx-eyebrow">Overlays</div>
       <div class="fx-chips">
-        <div class="fx-group" data-power>
-          <button class="fx-chip parent" style="--c:${FX.hv}">
-            <span class="fx-puck">${ICON.hv}</span>
-            <span class="fx-name">Power</span>
-            <span class="fx-disc" title="Show / hide HV &amp; LV">${CHEV}</span>
-          </button>
-          <div class="fx-subs">
-            ${this._chip('hv','HV network',ICON.hv,FX.hv,'data-child')}
-            ${this._chip('lv','LV network',ICON.lv,FX.lv,'data-child')}
-            <div class="fx-rag" data-rag>
-              <div class="fx-rag-tx"><i style="background:#FFC400;border-color:#3A2E00"></i>Transformer (substation)</div>
-              <button class="fx-cap" data-captog><span class="fx-cap-sw"></span>Colour cables by capacity</button>
-              <div class="fx-rag-legend">
-                <div class="fx-rag-bar"></div>
-                <div class="fx-rag-rows">
-                  <span><i style="background:${FX_RAGC.g}"></i>Spare</span>
-                  <span><i style="background:${FX_RAGC.a}"></i>Limited</span>
-                  <span><i style="background:${FX_RAGC.r}"></i>At capacity</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        ${leaves}
+        ${groupsHtml}
+        ${leafChips}
       </div>`;
   },
 });
-new LeafLayerDeck({ map, bases, baseDefault:'Street (OSM)', layers, lvNetwork, onCapacity:setLvCapacity }).addTo(map);
 
-// Open on the real Merseyside / N Wales footprint (the raw power bounds include
-// a few stray features up to Scotland that would zoom the map out to ~z7).
-map.fitBounds([[52.95,-4.90],[53.72,-2.45]]);
+// ---- config + mount (replaces the old single new LeafLayerDeck({...}) call) ----
+const GROUPS = [
+  { key:'power', label:'Power', color:FX.hv, icon:ICON.hv, children:[
+      { key:'power.hv', label:'HV network',     icon:ICON.hv,      color:FX.hv,     layer:sub['power.hv'] },
+      { key:'power.ps', label:'Power stations', icon:ICON.station, color:FX.power,  layer:sub['power.ps'] },
+      { key:'power.lv', label:'LV network',     icon:ICON.lv,      color:FX.lv,     layer:lvNetwork } ] },
+  { key:'fuel', label:'Oil &amp; chemicals', color:FX.fuel, icon:ICON.fuel, children:[
+      { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
+      { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
+  { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
+      { key:'gas.pipe', label:'Pipelines',   icon:ICON.pipe, color:FX.gas, layer:sub['gas.pipe'] },
+      { key:'gas.hold', label:'Gas holders', icon:ICON.gas,  color:FX.gas, layer:sub['gas.hold'] } ] },
+  { key:'water', label:'Water', color:FX.water, icon:ICON.water, children:[
+      { key:'water.site', label:'Sites',     icon:ICON.water, color:FX.water, layer:sub['water.site'] },
+      { key:'water.pipe', label:'Pipelines', icon:ICON.pipe,  color:FX.water, layer:sub['water.pipe'] } ] },
+  { key:'sewage', label:'Sewage', color:FX.sewage, icon:ICON.sewage, children:[
+      { key:'sewage.site', label:'Sites',     icon:ICON.sewage, color:FX.sewage, layer:sub['sewage.site'] },
+      { key:'sewage.pipe', label:'Pipelines', icon:ICON.pipe,   color:FX.sewage, layer:sub['sewage.pipe'] } ] },
+].map(g => ({...g, children: g.children.filter(c => c.layer)}));   // drop any child whose layer is missing
+
+new LeafLayerDeck({
+  map, bases, baseDefault:'Street (OSM)',
+  groups: GROUPS,
+  leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
+  lvNetwork,
+  onCapacity: setLvCapacity,
+  onHvLabels: setHvLabels,
+}).addTo(map);
+
 
 const title=L.control({position:'topleft'});
 title.onAdd=()=>{const d=L.DomUtil.create('div','tt');d.style.marginLeft='44px';
