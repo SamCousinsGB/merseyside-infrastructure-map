@@ -313,6 +313,7 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-rag-rows span{display:inline-flex;align-items:center;gap:5px}
 .fx-rag-rows i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .lab{background:#15202B;color:#fff;border:none;font:11px/1.2 system-ui;font-weight:600;padding:1px 5px;border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap}
+.lvhint{background:rgba(15,32,43,.92);color:#fff;font:600 12.5px/1.3 -apple-system,system-ui,sans-serif;padding:7px 12px;border-radius:9px;box-shadow:0 2px 10px rgba(0,0,0,.3);margin:0 0 8px 8px}
 .lab:before{display:none}
 .tt{background:#fff;border-radius:9px;box-shadow:0 1px 8px rgba(0,0,0,.22);padding:8px 12px;font:system-ui}
 .tt h3{margin:0;font-size:15px;font-weight:600;color:#1a1a1a}
@@ -388,7 +389,6 @@ ORDER.forEach(k=>{layers[k]=catLayer(k);});
 data.features.filter(f=>f.properties.traction).forEach(f=>{
   const c=L.geoJSON(f).getBounds().getCenter();
   L.circleMarker(c,{radius:7,color:'#15202B',weight:2,fillColor:'#00C2A8',fillOpacity:.95})
-    .bindTooltip(f.properties.label,{permanent:true,direction:'top',className:'lab',offset:[0,-7]})
     .bindPopup(pop(f.properties)+gmaps(c.lat,c.lng)).addTo(layers.train);
 });
 ORDER.forEach(k=>layers[k].addTo(map));
@@ -487,11 +487,20 @@ function syncLvTx(){
   if(lvTxLoading) return; lvTxLoading=true;
   fetch('lv_transformers.geojson').then(r=>r.json()).then(fc=>{lvTxData=fc;lvTxLoading=false;renderLvTx();}).catch(()=>{lvTxLoading=false;});
 }
-function syncLv(){ syncLvTx(); renderLvCables(); }
+function syncLv(){ syncLvTx(); renderLvCables(); updateLvHint(); }
 const lvNetwork=L.layerGroup([lvTx]);   // cables added lazily into it by renderLvCables
 lvNetwork.on('add',syncLv);
-lvNetwork.on('remove',()=>{ lvTx.clearLayers(); if(lvCableLayer)lvCableLayer.clearLayers(); });
+lvNetwork.on('remove',()=>{ lvTx.clearLayers(); if(lvCableLayer)lvCableLayer.clearLayers(); updateLvHint(); });
 map.on('moveend',syncLv);
+// LV only draws when zoomed in (transformers z14+, cables z16+); tell the user so
+// it doesn't look broken when toggled on from a wide view.
+const lvHint=L.control({position:'bottomleft'});
+lvHint.onAdd=()=>{const d=L.DomUtil.create('div','lvhint');d.innerHTML='&#128269; Zoom in to see the LV network';return d;};
+function updateLvHint(){
+  const show=map.hasLayer(lvNetwork)&&map.getZoom()<14;
+  if(show && !lvHint._map) lvHint.addTo(map);
+  else if(!show && lvHint._map) lvHint.remove();
+}
 
 // ---- Layer control: custom "LayerDeck" (Power group -> HV + LV) -------------
 const FX = {
@@ -650,7 +659,9 @@ const LeafLayerDeck = L.Control.extend({
 });
 new LeafLayerDeck({ map, bases, baseDefault:'Street (OSM)', layers, lvNetwork, onCapacity:setLvCapacity }).addTo(map);
 
-map.fitBounds(layers.power.getBounds().pad(0.03));
+// Open on the real Merseyside / N Wales footprint (the raw power bounds include
+// a few stray features up to Scotland that would zoom the map out to ~z7).
+map.fitBounds([[52.95,-4.90],[53.72,-2.45]]);
 
 const title=L.control({position:'topleft'});
 title.onAdd=()=>{const d=L.DomUtil.create('div','tt');d.style.marginLeft='44px';

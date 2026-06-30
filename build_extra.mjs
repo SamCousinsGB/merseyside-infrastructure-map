@@ -21,7 +21,8 @@ const OUT = process.argv[4] || "extra_infra.geojson";
 
 const load = (p) => JSON.parse(fs.readFileSync(p, "utf8")).elements || [];
 const KEEP = ["name", "operator", "substance", "content", "location", "voltage", "ref",
-  "man_made", "power", "waterway", "plant:source", "generator:source", "start_date"];
+  "man_made", "power", "waterway", "plant:source", "generator:source",
+  "plant:output:electricity", "start_date"];
 const small = (t) => Object.fromEntries(KEEP.filter((k) => k in t).map((k) => [k, t[k]]));
 const osmUrl = (e) => `https://www.openstreetmap.org/${e.type}/${e.id}`;
 const feat = (geom, p) => ({ type: "Feature", geometry: geom, properties: p });
