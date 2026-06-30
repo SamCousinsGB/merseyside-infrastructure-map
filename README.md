@@ -16,7 +16,7 @@ category; **solid = overground, dashed = underground / tunnel.**
 | Layer | Contents |
 |-------|----------|
 | **Power → HV** | High-voltage network: substations, overhead lines and underground cables (SP Manweb, from OSM) |
-| **Power → LV** | SP Manweb **low-voltage** cables + distribution transformers, coloured by spare network capacity |
+| **Power → LV** | SP Manweb **low-voltage** cables + distribution transformers (optionally shaded by spare network capacity) |
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, water treatment works, towers, clean-water pumping stations, and **water pipelines** |
 | **Sewage** | Wastewater treatment works + sewage pumping stations |
@@ -28,10 +28,11 @@ Networks (not OSM). It is **off by default**; transformers appear from zoom 14
 and cables from **zoom 16** (street level) — there is far too much to show
 region-wide. The ~1.47M source cable segments are merged into continuous
 polylines and drawn as real, full-precision vectors for the current viewport, so
-they stay crisp at every zoom. Cables are coloured by capacity headroom
-(**green** = spare, **amber** = limited, **red** = at/near capacity, **grey** =
-not assessed); transformers are yellow markers. Click a transformer for "LV
-transformer" + its capacity, or a cable for its type, voltage and capacity.
+they stay crisp at every zoom. Cables are a single colour by default; toggle
+**"Colour cables by capacity"** to shade them by capacity headroom (**green** =
+spare, **amber** = limited, **red** = at/near capacity, **grey** = not assessed).
+Transformers are yellow markers. Click a transformer for "LV transformer" + its
+capacity, or a cable for its type, voltage and capacity.
 
 Switchable basemaps: Street (OSM), Satellite, Satellite + labels, Topographic,
 and a clean Carto style.

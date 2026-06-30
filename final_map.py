@@ -293,15 +293,25 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-subs .fx-chip:first-child{margin-top:2px}
 .fx-rag{max-height:0;opacity:0;overflow:hidden;
   transition:max-height .26s cubic-bezier(.16,1,.3,1),opacity .2s ease;
-  display:flex;flex-direction:column;gap:5px;margin:0 2px}
-.fx-rag.is-on{max-height:120px;opacity:1;margin-top:8px}
-.fx-rag-title{font:700 9px/1 inherit;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+  display:flex;flex-direction:column;gap:6px;margin:0 2px}
+.fx-rag.is-on{max-height:170px;opacity:1;margin-top:8px}
+.fx-rag-tx{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted)}
+.fx-rag-tx i{width:9px;height:9px;border-radius:50%;border:1.5px solid;flex:0 0 auto}
+.fx-cap{display:flex;align-items:center;gap:8px;width:100%;border:none;background:transparent;
+  cursor:pointer;color:var(--ink);font:600 11px/1 inherit;padding:1px 0;text-align:left}
+.fx-cap-sw{position:relative;width:26px;height:15px;border-radius:9px;background:#d7dde5;transition:.2s;flex:0 0 auto}
+.fx-cap-sw:after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;
+  background:#fff;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.fx-cap.on .fx-cap-sw{background:var(--accent)}
+.fx-cap.on .fx-cap-sw:after{transform:translateX(11px)}
+.fx-rag-legend{max-height:0;opacity:0;overflow:hidden;transition:max-height .24s ease,opacity .2s ease;
+  display:flex;flex-direction:column;gap:5px}
+.fx-rag.cap-on .fx-rag-legend{max-height:60px;opacity:1}
 .fx-rag-bar{height:6px;border-radius:4px;
   background:linear-gradient(90deg,#2E9E5B 0 33%,#E8A317 33% 66%,#D5392B 66%)}
 .fx-rag-rows{display:flex;flex-wrap:wrap;gap:4px 11px;font-size:10px;color:var(--muted)}
 .fx-rag-rows span{display:inline-flex;align-items:center;gap:5px}
 .fx-rag-rows i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
-.fx-rag-rows i.dot{border:1.5px solid}
 .lab{background:#15202B;color:#fff;border:none;font:11px/1.2 system-ui;font-weight:600;padding:1px 5px;border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap}
 .lab:before{display:none}
 .tt{background:#fff;border-radius:9px;box-shadow:0 1px 8px rgba(0,0,0,.22);padding:8px 12px;font:system-ui}
@@ -391,7 +401,10 @@ const RAGT={r:'at / near capacity',a:'limited spare capacity',g:'spare capacity'
 const lvLon2x=(lon,z)=>Math.floor((lon+180)/360*Math.pow(2,z));
 const lvLat2y=(lat,z)=>{const r=lat*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));};
 const LV_GRID=14, LV_MINZOOM=16, LV_MAXCACHE=80;
-const lvCanvas=L.canvas({padding:0.3});
+const LV_PLAIN='#22B8D9';                  // default: cables in one colour
+let lvByCapacity=false;                     // toggle: colour cables by RAG capacity
+function lvCableStyle(f){return{color:lvByCapacity?(RAGC[f.properties.rag]||RAGC.x):LV_PLAIN,weight:1.6,opacity:.9};}
+function setLvCapacity(on){lvByCapacity=on; if(lvCableLayer)lvCableLayer.setStyle(lvCableStyle);}
 const lvTileCache=new Map();
 let lvCableLayer=null, lvRenderToken=0;
 function lvCablePopup(e,p){
@@ -421,8 +434,9 @@ async function renderLvCables(){
   const seen=new Set(), feats=[];
   for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
   if(!lvCableLayer){
-    lvCableLayer=L.geoJSON(null,{renderer:lvCanvas,
-      style:f=>({color:RAGC[f.properties.rag]||RAGC.x,weight:1.6,opacity:.9}),
+    // shared (map default) canvas renderer so clicks hit-test across all layers
+    lvCableLayer=L.geoJSON(null,{
+      style:lvCableStyle,
       onEachFeature:(f,l)=>l.on('click',e=>lvCablePopup(e,f.properties))});
     lvNetwork.addLayer(lvCableLayer);
   }
@@ -546,6 +560,15 @@ const LeafLayerDeck = L.Control.extend({
     });
     L.DomEvent.on(hvChip, 'click', () => { this._toggle(hvChip, HV, m); refreshParent(); });
     L.DomEvent.on(lvChip, 'click', () => { this._toggle(lvChip, LV, m); refreshParent(); });
+    const captog = group.querySelector('[data-captog]');
+    L.DomEvent.on(captog, 'click', (e) => {
+      L.DomEvent.stop(e);
+      const on = !captog.classList.contains('on');
+      captog.classList.toggle('on', on);
+      legend.classList.toggle('cap-on', on);
+      cfg.onCapacity && cfg.onCapacity(on);
+      if (group.classList.contains('open')) drawer.style.height = drawer.scrollHeight + 'px';
+    });
     refreshParent();
     requestAnimationFrame(() => setOpen(m.hasLayer(HV) || m.hasLayer(LV)));
   },
@@ -582,15 +605,17 @@ const LeafLayerDeck = L.Control.extend({
           </button>
           <div class="fx-subs">
             ${this._chip('hv','HV network',ICON.hv,FX.hv,'data-child')}
-            ${this._chip('lv','LV network <small>z16+</small>',ICON.lv,FX.lv,'data-child')}
+            ${this._chip('lv','LV network',ICON.lv,FX.lv,'data-child')}
             <div class="fx-rag" data-rag>
-              <div class="fx-rag-title">LV capacity</div>
-              <div class="fx-rag-bar"></div>
-              <div class="fx-rag-rows">
-                <span><i style="background:${FX_RAGC.g}"></i>Spare</span>
-                <span><i style="background:${FX_RAGC.a}"></i>Limited</span>
-                <span><i style="background:${FX_RAGC.r}"></i>At capacity</span>
-                <span><i class="dot" style="background:#FFC400;border-color:#3A2E00"></i>Transformer</span>
+              <div class="fx-rag-tx"><i style="background:#FFC400;border-color:#3A2E00"></i>Transformer (substation)</div>
+              <button class="fx-cap" data-captog><span class="fx-cap-sw"></span>Colour cables by capacity</button>
+              <div class="fx-rag-legend">
+                <div class="fx-rag-bar"></div>
+                <div class="fx-rag-rows">
+                  <span><i style="background:${FX_RAGC.g}"></i>Spare</span>
+                  <span><i style="background:${FX_RAGC.a}"></i>Limited</span>
+                  <span><i style="background:${FX_RAGC.r}"></i>At capacity</span>
+                </div>
               </div>
             </div>
           </div>
@@ -599,7 +624,7 @@ const LeafLayerDeck = L.Control.extend({
       </div>`;
   },
 });
-new LeafLayerDeck({ map, bases, baseDefault:'Street (OSM)', layers, lvNetwork }).addTo(map);
+new LeafLayerDeck({ map, bases, baseDefault:'Street (OSM)', layers, lvNetwork, onCapacity:setLvCapacity }).addTo(map);
 
 map.fitBounds(layers.power.getBounds().pad(0.03));
 
