@@ -12,6 +12,11 @@ Layers (each independently toggleable, each a single colour):
 
 Solid line = overground, dashed line = underground / tunnel.
 
+The LV (low-voltage) network is a separate overlay: SP Energy Networks
+"ConnectMore" cables + transformers, served from local vector tiles under
+tiles/lv/ (built by fetch_lv.mjs + build_lv_tiles.mjs), shown from zoom 14 and
+coloured by spare network capacity. It is not embedded in this file.
+
 Inputs (OSM snapshots produced earlier in the investigation):
   spen_complete_revert.geojson, current_power.geojson   power=*
   merseyrail_rail.json        railway=rail + electrified=rail (raw Overpass geom)
@@ -235,7 +240,8 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .leaflet-popup-content td{border-top:1px solid #eee;padding:1px 7px 1px 0}.k{color:#999}
 </style>
 </head><body><div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script><script>
 const data=__DATA__;
 const CAT={
   power :{c:'#e23b2e',label:'Power'},
@@ -293,8 +299,68 @@ data.features.filter(f=>f.properties.traction).forEach(f=>{
     .bindPopup(pop(f.properties)).addTo(layers.train);
 });
 ORDER.forEach(k=>layers[k].addTo(map));
+
+// ---- LV (low-voltage) network ------------------------------------------------
+// SP Energy Networks "ConnectMore" data. Two local parts, off by default, shown
+// from zoom 14:
+//   cables       ~1.5M segments streamed from local canvas vector tiles
+//                (tiles/lv/{z}/{x}/{y}.pbf, native zoom 14-15). Canvas keeps
+//                panning/zooming smooth even in dense areas.
+//   transformers 27.6k points from lv_transformers.geojson, drawn as fixed-size
+//                clickable markers ("LV transformer"), lazy-loaded on first show.
+// Cables are coloured by network capacity headroom (RAG).
+const RAGC={r:'#d7191c',a:'#f0a000',g:'#1a9641',x:'#9aa0a6'};
+const RAGT={r:'at / near capacity',a:'limited spare capacity',g:'spare capacity',x:'not assessed'};
+
+const lvCables=L.vectorGrid.protobuf('tiles/lv/{z}/{x}/{y}.pbf',{
+  rendererFactory:L.canvas.tile,
+  minZoom:14,maxZoom:19,minNativeZoom:14,maxNativeZoom:15,
+  interactive:true,
+  attribution:'LV network &copy; <a href="https://www.spenergynetworks.co.uk" target="_blank">SP Energy Networks</a> (ConnectMore)',
+  vectorTileLayerStyles:{
+    lv:p=>({weight:1.5,color:RAGC[p.rag]||RAGC.x,opacity:.9}),
+    tx:()=>({radius:0,opacity:0,fillOpacity:0}),   // drawn as markers below instead
+  },
+});
+lvCables.on('click',e=>{const p=(e.layer&&e.layer.properties)||{};
+  if(p.type===undefined) return;                   // skip the hidden tx points
+  L.popup({className:'tt'}).setLatLng(e.latlng).setContent(
+    `<div class="pt">LV cable</div><div class="pm">SP Manweb low-voltage network</div>`
+    +`<table><tr><td class="k">cable</td><td>${p.type||'-'}</td></tr>`
+    +`<tr><td class="k">voltage</td><td>${p.v||230} V</td></tr>`
+    +`<tr><td class="k">capacity</td><td>${RAGT[p.rag]||RAGT.x}</td></tr></table>`).openOn(map);});
+
+// Transformers: fixed-size, always-clickable markers. Only the ones currently in
+// view are instantiated (from zoom 14), so all 27.6k never burden the map at once.
+const lvTx=L.layerGroup();
+let lvTxData=null, lvTxLoading=false;
+function txPopup(p){return `<div class="pt">LV transformer</div>`
+  +`<div class="pm">distribution substation &middot; ${RAGT[p.rag]||RAGT.x}</div>`
+  +(p.id?`<table><tr><td class="k">ref</td><td>${p.id}</td></tr></table>`:'');}
+function renderLvTx(){
+  lvTx.clearLayers();
+  if(!lvTxData||!map.hasLayer(lvNetwork)||map.getZoom()<14) return;
+  const b=map.getBounds().pad(0.25);
+  for(const f of lvTxData.features){
+    const c=f.geometry.coordinates;            // [lng,lat]
+    if(!b.contains([c[1],c[0]])) continue;
+    L.circleMarker([c[1],c[0]],{radius:5,color:'#000',weight:1.5,fillColor:'#ffd400',fillOpacity:1})
+      .bindPopup(txPopup(f.properties||{}),{className:'tt'}).addTo(lvTx);
+  }
+}
+function syncLvTx(){
+  if(!map.hasLayer(lvNetwork)||map.getZoom()<14){ lvTx.clearLayers(); return; }
+  if(lvTxData){ renderLvTx(); return; }
+  if(lvTxLoading) return; lvTxLoading=true;
+  fetch('lv_transformers.geojson').then(r=>r.json()).then(fc=>{lvTxData=fc;lvTxLoading=false;renderLvTx();}).catch(()=>{lvTxLoading=false;});
+}
+const lvNetwork=L.layerGroup([lvCables,lvTx]);
+lvNetwork.on('add',syncLvTx);
+map.on('moveend',syncLvTx);
+
 const overlays={};
 ORDER.forEach(k=>overlays[`<span class="ln" style="border-color:${CAT[k].c}"></span>${CAT[k].label}`]=layers[k]);
+overlays['<span class="ln" style="border:none;background:linear-gradient(90deg,#1a9641 0 33%,#f0a000 33% 66%,#d7191c 66%)"></span>LV network <small style="color:#888">(zoom in)</small>']=lvNetwork;
 L.control.layers(bases,overlays,{collapsed:false,position:'topright'}).addTo(map);
 
 map.fitBounds(layers.power.getBounds().pad(0.03));

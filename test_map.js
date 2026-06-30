@@ -12,13 +12,16 @@ let featuresExercised = 0;
 function layer() {
   const o = {
     addTo() { return o; }, addLayer() { return o; },
-    bindTooltip() { return o; }, bindPopup() { return o; },
+    bindTooltip() { return o; }, bindPopup() { return o; }, on() { return o; },
     getBounds() { return { getCenter() { return [0, 0]; }, pad() { return this; } }; },
   };
   return o;
 }
 const L = {
-  map() { return { fitBounds() {}, addLayer() {} }; },
+  map() { return { fitBounds() {}, addLayer() {}, on() {}, hasLayer() { return false; },
+                   getZoom() { return 14; }, getBounds() { return { pad() { return this; }, contains() { return false; } }; },
+                   closePopup() {} }; },
+  popup() { const p = { setLatLng() { return p; }, setContent() { return p; }, openOn() { return p; } }; return p; },
   tileLayer() { return layer(); },
   layerGroup() { return layer(); },
   featureGroup() { return layer(); },
@@ -38,6 +41,8 @@ const L = {
   DomUtil: { create() { return { style: {}, innerHTML: '' }; } },
 };
 L.control.layers = () => layer();
+L.canvas = { tile() { return {}; } };
+L.vectorGrid = { protobuf() { return layer(); } };
 
 try {
   new Function('L', app)(L);
