@@ -1,13 +1,10 @@
 {
   "name": "merseyside-infrastructure-map-build",
   "private": true,
-  "description": "Build-time tooling only. The published map (index.html) loads its libraries from a CDN and needs none of this at runtime. Build scripts use the .mjs extension so they run as ES modules without a package-level \"type\".",
+  "description": "Build-time tooling only (Node, no deps). The published map (index.html) loads its libraries from a CDN and needs none of this at runtime. Build scripts use the .mjs extension so they run as ES modules without a package-level \"type\".",
   "scripts": {
     "fetch-lv": "node --max-old-space-size=8192 fetch_lv.mjs",
-    "build-lv-tiles": "node --max-old-space-size=8192 build_lv_tiles.mjs"
-  },
-  "devDependencies": {
-    "geojson-vt": "^4.0.3",
-    "vt-pbf": "^3.1.3"
+    "merge-lv": "node --max-old-space-size=10240 merge_lv.mjs",
+    "build-lv-tiles": "node --max-old-space-size=10240 build_lv_geojson_tiles.mjs"
   }
 }

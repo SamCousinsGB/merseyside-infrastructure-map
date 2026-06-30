@@ -13,6 +13,7 @@ function layer() {
   const o = {
     addTo() { return o; }, addLayer() { return o; },
     bindTooltip() { return o; }, bindPopup() { return o; }, on() { return o; },
+    clearLayers() { return o; }, addData() { return o; },
     getBounds() { return { getCenter() { return [0, 0]; }, pad() { return this; } }; },
   };
   return o;
@@ -41,8 +42,14 @@ const L = {
   DomUtil: { create() { return { style: {}, innerHTML: '' }; } },
 };
 L.control.layers = () => layer();
-L.canvas = { tile() { return {}; } };
-L.vectorGrid = { protobuf() { return layer(); } };
+L.canvas = function () { return layer(); };
+L.canvas.tile = function () { return {}; };
+L.setOptions = function () {};
+L.Control = { extend(proto) {
+  function C(...a) { if (proto.initialize) proto.initialize.apply(this, a); }
+  C.prototype = Object.assign({}, proto, { addTo() { return this; } });
+  return C;
+} };
 
 try {
   new Function('L', app)(L);

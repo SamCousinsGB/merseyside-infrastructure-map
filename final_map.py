@@ -12,10 +12,12 @@ Layers (each independently toggleable, each a single colour):
 
 Solid line = overground, dashed line = underground / tunnel.
 
-The LV (low-voltage) network is a separate overlay: SP Energy Networks
-"ConnectMore" cables + transformers, served from local vector tiles under
-tiles/lv/ (built by fetch_lv.mjs + build_lv_tiles.mjs), shown from zoom 14 and
-coloured by spare network capacity. It is not embedded in this file.
+The LV (low-voltage) network is a separate overlay grouped under "Power" with
+the HV network: SP Energy Networks "ConnectMore" cables + transformers. Cables
+are full-precision GeoJSON tiles under tiles/lvgeo/ rendered as real canvas
+vectors for the viewport (crisp at every zoom); transformers come from
+lv_transformers.geojson. Built by fetch_lv.mjs + merge_lv.mjs +
+build_lv_geojson_tiles.mjs; coloured by spare network capacity. Not embedded here.
 
 Inputs (OSM snapshots produced earlier in the investigation):
   spen_complete_revert.geojson, current_power.geojson   power=*
@@ -222,13 +224,85 @@ HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
 html,body,#map{height:100%;margin:0}#map{width:100%}
-.leaflet-control-layers{border:none;border-radius:10px;box-shadow:0 1px 8px rgba(0,0,0,.22);font:13px/1.5 system-ui;overflow:hidden}
-.leaflet-control-layers-expanded{padding:6px 4px}
-.leaflet-control-layers-list{padding:2px 12px 2px 8px}
-.leaflet-control-layers label{display:flex;align-items:center;margin:3px 0;font-weight:500;color:#1a1a1a;cursor:pointer}
-.leaflet-control-layers input{margin:0 8px 0 2px}
-.ln{display:inline-block;width:22px;height:0;border-top:4px solid;border-radius:2px;margin:0 8px 0 1px;vertical-align:middle}
-.lab{background:#0a7d2c;color:#fff;border:none;font:11px/1.2 system-ui;font-weight:600;padding:1px 5px;border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap}
+.leaflet-control-layers{display:none}
+.fx-deck{
+  --bg:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#eef1f5;
+  --accent:#6A2FBF; --radius:16px;
+  width:236px; background:var(--bg); color:var(--ink);
+  border-radius:var(--radius); padding:10px;
+  box-shadow:0 6px 26px -6px rgba(15,23,42,.28), 0 2px 6px rgba(15,23,42,.10);
+  font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased; user-select:none;
+  animation:fx-in .28s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes fx-in{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1;transform:none}}
+.fx-head{padding:2px 4px 8px}
+.fx-title{font-weight:700;letter-spacing:.3px;font-size:13px}
+.fx-eyebrow{font-size:9.5px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;
+  color:var(--muted);margin:6px 4px 6px}
+.fx-seg{display:flex;flex-wrap:wrap;gap:4px;background:#f5f7fa;padding:4px;border-radius:11px}
+.fx-base{flex:1 1 auto;border:none;background:transparent;color:var(--muted);
+  font:600 11px/1 inherit;padding:6px 7px;border-radius:8px;cursor:pointer;transition:.16s;white-space:nowrap}
+.fx-base:hover{color:var(--ink)}
+.fx-base.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(15,23,42,.16)}
+.fx-chips{display:flex;flex-direction:column;gap:5px}
+.fx-chip{
+  --c:#888;position:relative;display:flex;align-items:center;gap:9px;width:100%;
+  border:1.5px solid var(--line);background:#fff;border-radius:12px;padding:7px 9px;cursor:pointer;
+  color:var(--ink);font:600 12.5px/1 inherit;text-align:left;overflow:hidden;
+  transition:transform .12s cubic-bezier(.34,1.56,.64,1),border-color .18s,box-shadow .18s;
+}
+.fx-chip:hover{border-color:#dfe5ec;box-shadow:0 2px 10px -4px rgba(15,23,42,.22)}
+.fx-chip:active{transform:scale(.97)}
+.fx-chip:before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--c);
+  opacity:0;transform:scaleX(0);transform-origin:left;
+  transition:transform .32s cubic-bezier(.4,0,.2,1),opacity .32s;z-index:0}
+.fx-chip.on:before{opacity:.10;transform:scaleX(1)}
+.fx-puck{position:relative;z-index:1;flex:0 0 auto;display:grid;place-items:center;
+  width:28px;height:28px;border-radius:9px;color:#fff;background:var(--c);transition:.2s}
+.fx-puck svg{width:17px;height:17px}
+.fx-chip:not(.on) .fx-puck{background:#eef1f5;color:var(--c)}
+.fx-chip.on .fx-puck{box-shadow:0 3px 10px -2px var(--c)}
+.fx-name{position:relative;z-index:1;flex:1 1 auto}
+.fx-name small{font-weight:600;color:var(--muted);font-size:9.5px;margin-left:3px;
+  background:#f1f5f9;padding:1px 4px;border-radius:5px;vertical-align:middle}
+.fx-bar{position:relative;z-index:1;width:18px;height:4px;border-radius:3px;background:var(--c);opacity:.28;transition:.2s}
+.fx-chip.on .fx-bar{display:none}
+.fx-tick{position:relative;z-index:1;width:0;color:var(--c);opacity:0;transform:scale(.4);transition:.2s;overflow:hidden}
+.fx-tick svg{width:15px;height:15px}
+.fx-chip.on .fx-tick{width:15px;opacity:1;transform:scale(1)}
+@keyframes fx-pulse{0%{box-shadow:0 0 0 0 var(--c)}100%{box-shadow:0 0 0 8px transparent}}
+.fx-chip.pulse .fx-puck{animation:fx-pulse .44s ease-out}
+.fx-group{border:1.5px solid var(--line);border-radius:13px;overflow:hidden;transition:border-color .18s}
+.fx-group.open{border-color:#dfe5ec}
+.fx-group .fx-chip.parent{border:none;border-radius:0;background:transparent}
+.fx-group .fx-chip.parent:hover{box-shadow:none;background:#fafbfc}
+.fx-group .fx-chip.parent:before{display:none}
+.fx-disc{position:relative;z-index:2;flex:0 0 auto;display:grid;place-items:center;
+  width:24px;height:24px;border-radius:7px;color:var(--muted);transition:.2s;cursor:pointer}
+.fx-disc:hover{background:#f1f5f9;color:var(--ink)}
+.fx-disc svg{width:16px;height:16px;transition:transform .26s cubic-bezier(.4,0,.2,1)}
+.fx-group.open .fx-disc svg{transform:rotate(180deg)}
+.fx-chip.parent .fx-puck{background:#eef1f5;color:var(--c)}
+.fx-chip.parent.partial .fx-puck{background:var(--c);color:#fff;opacity:.55}
+.fx-chip.parent.on .fx-puck{background:var(--c);color:#fff;opacity:1;box-shadow:0 3px 10px -2px var(--c)}
+.fx-subs{height:0;overflow:hidden;transition:height .28s cubic-bezier(.4,0,.2,1);
+  padding:0 8px;background:linear-gradient(#fbfcfe,#fff)}
+.fx-group.open .fx-subs{padding-bottom:8px}
+.fx-subs .fx-chip{margin-top:6px}
+.fx-subs .fx-chip:first-child{margin-top:2px}
+.fx-rag{max-height:0;opacity:0;overflow:hidden;
+  transition:max-height .26s cubic-bezier(.16,1,.3,1),opacity .2s ease;
+  display:flex;flex-direction:column;gap:5px;margin:0 2px}
+.fx-rag.is-on{max-height:120px;opacity:1;margin-top:8px}
+.fx-rag-title{font:700 9px/1 inherit;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+.fx-rag-bar{height:6px;border-radius:4px;
+  background:linear-gradient(90deg,#2E9E5B 0 33%,#E8A317 33% 66%,#D5392B 66%)}
+.fx-rag-rows{display:flex;flex-wrap:wrap;gap:4px 11px;font-size:10px;color:var(--muted)}
+.fx-rag-rows span{display:inline-flex;align-items:center;gap:5px}
+.fx-rag-rows i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.fx-rag-rows i.dot{border:1.5px solid}
+.lab{background:#15202B;color:#fff;border:none;font:11px/1.2 system-ui;font-weight:600;padding:1px 5px;border-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap}
 .lab:before{display:none}
 .tt{background:#fff;border-radius:9px;box-shadow:0 1px 8px rgba(0,0,0,.22);padding:8px 12px;font:system-ui}
 .tt h3{margin:0;font-size:15px;font-weight:600;color:#1a1a1a}
@@ -241,15 +315,15 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 </style>
 </head><body><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script><script>
+<script>
 const data=__DATA__;
 const CAT={
-  power :{c:'#e23b2e',label:'Power'},
-  train :{c:'#333333',label:'Trains'},
-  water :{c:'#1ba3c6',label:'Water'},
-  sewage:{c:'#8a6d3b',label:'Sewage'},
-  gas   :{c:'#d9730d',label:'Gas'},
-  fuel  :{c:'#9b27b0',label:'Oil &amp; chemicals'},
+  power :{c:'#6A2FBF',label:'Power'},
+  train :{c:'#2B2F36',label:'Trains'},
+  water :{c:'#1C8FB0',label:'Water'},
+  sewage:{c:'#8A6A45',label:'Sewage'},
+  gas   :{c:'#E8730C',label:'Gas'},
+  fuel  :{c:'#C026A8',label:'Oil &amp; chemicals'},
 };
 const ORDER=['power','train','water','sewage','gas','fuel'];
 const map=L.map('map',{preferCanvas:true,maxZoom:19});
@@ -294,44 +368,69 @@ ORDER.forEach(k=>{layers[k]=catLayer(k);});
 // The Trains layer also carries labelled markers for the 6 traction points.
 data.features.filter(f=>f.properties.traction).forEach(f=>{
   const c=L.geoJSON(f).getBounds().getCenter();
-  L.circleMarker(c,{radius:7,color:'#0a7d2c',weight:2,fillColor:'#2ee06a',fillOpacity:.95})
+  L.circleMarker(c,{radius:7,color:'#15202B',weight:2,fillColor:'#00C2A8',fillOpacity:.95})
     .bindTooltip(f.properties.label,{permanent:true,direction:'top',className:'lab',offset:[0,-7]})
     .bindPopup(pop(f.properties)).addTo(layers.train);
 });
 ORDER.forEach(k=>layers[k].addTo(map));
 
 // ---- LV (low-voltage) network ------------------------------------------------
-// SP Energy Networks "ConnectMore" data. Two local parts, off by default, shown
-// from zoom 14:
-//   cables       ~1.5M segments streamed from local canvas vector tiles
-//                (tiles/lv/{z}/{x}/{y}.pbf, native zoom 14-15). Canvas keeps
-//                panning/zooming smooth even in dense areas.
-//   transformers 27.6k points from lv_transformers.geojson, drawn as fixed-size
-//                clickable markers ("LV transformer"), lazy-loaded on first show.
+// SP Energy Networks "ConnectMore" data, kept local. Two parts, off by default:
+//   cables       ~310k merged polylines (from ~1.47M source segments), served as
+//                full-precision GeoJSON tiles (tiles/lvgeo/{x}/{y}.json, z14 grid).
+//                A viewport-windowed L.geoJSON canvas layer draws only the cables
+//                in view, so they are REAL vectors - crisp at every zoom, exactly
+//                like the other layers. Shown from zoom 16.
+//   transformers 27.6k points from lv_transformers.geojson, fixed-size clickable
+//                markers; only the in-view ones exist. Shown from zoom 14.
 // Cables are coloured by network capacity headroom (RAG).
-const RAGC={r:'#d7191c',a:'#f0a000',g:'#1a9641',x:'#9aa0a6'};
+const RAGC={r:'#D5392B',a:'#E8A317',g:'#2E9E5B',x:'#9AA0A6'};
 const RAGT={r:'at / near capacity',a:'limited spare capacity',g:'spare capacity',x:'not assessed'};
 
-const lvCables=L.vectorGrid.protobuf('tiles/lv/{z}/{x}/{y}.pbf',{
-  rendererFactory:L.canvas.tile,
-  minZoom:14,maxZoom:19,minNativeZoom:14,maxNativeZoom:15,
-  interactive:true,
-  attribution:'LV network &copy; <a href="https://www.spenergynetworks.co.uk" target="_blank">SP Energy Networks</a> (ConnectMore)',
-  vectorTileLayerStyles:{
-    lv:p=>({weight:1.5,color:RAGC[p.rag]||RAGC.x,opacity:.9}),
-    tx:()=>({radius:0,opacity:0,fillOpacity:0}),   // drawn as markers below instead
-  },
-});
-lvCables.on('click',e=>{const p=(e.layer&&e.layer.properties)||{};
-  if(p.type===undefined) return;                   // skip the hidden tx points
+// web-mercator tile maths for the z14 GeoJSON cable grid
+const lvLon2x=(lon,z)=>Math.floor((lon+180)/360*Math.pow(2,z));
+const lvLat2y=(lat,z)=>{const r=lat*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));};
+const LV_GRID=14, LV_MINZOOM=16, LV_MAXCACHE=80;
+const lvCanvas=L.canvas({padding:0.3});
+const lvTileCache=new Map();
+let lvCableLayer=null, lvRenderToken=0;
+function lvCablePopup(e,p){
   L.popup({className:'tt'}).setLatLng(e.latlng).setContent(
     `<div class="pt">LV cable</div><div class="pm">SP Manweb low-voltage network</div>`
     +`<table><tr><td class="k">cable</td><td>${p.type||'-'}</td></tr>`
     +`<tr><td class="k">voltage</td><td>${p.v||230} V</td></tr>`
-    +`<tr><td class="k">capacity</td><td>${RAGT[p.rag]||RAGT.x}</td></tr></table>`).openOn(map);});
+    +`<tr><td class="k">capacity</td><td>${RAGT[p.rag]||RAGT.x}</td></tr></table>`).openOn(map);
+}
+async function lvFetchTile(x,y){
+  const k=x+'/'+y;
+  if(lvTileCache.has(k)){const v=lvTileCache.get(k);lvTileCache.delete(k);lvTileCache.set(k,v);return v;}
+  let fc={features:[]};
+  try{const r=await fetch('tiles/lvgeo/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
+  lvTileCache.set(k,fc);
+  while(lvTileCache.size>LV_MAXCACHE)lvTileCache.delete(lvTileCache.keys().next().value);
+  return fc;
+}
+async function renderLvCables(){
+  if(!map.hasLayer(lvNetwork)||map.getZoom()<LV_MINZOOM){ if(lvCableLayer)lvCableLayer.clearLayers(); return; }
+  const token=++lvRenderToken;
+  const b=map.getBounds().pad(0.2), z=LV_GRID;
+  const x0=lvLon2x(b.getWest(),z),x1=lvLon2x(b.getEast(),z),y0=lvLat2y(b.getNorth(),z),y1=lvLat2y(b.getSouth(),z);
+  const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(lvFetchTile(x,y));
+  const fcs=await Promise.all(reqs);
+  if(token!==lvRenderToken) return;            // a newer render superseded this one
+  const seen=new Set(), feats=[];
+  for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
+  if(!lvCableLayer){
+    lvCableLayer=L.geoJSON(null,{renderer:lvCanvas,
+      style:f=>({color:RAGC[f.properties.rag]||RAGC.x,weight:1.6,opacity:.9}),
+      onEachFeature:(f,l)=>l.on('click',e=>lvCablePopup(e,f.properties))});
+    lvNetwork.addLayer(lvCableLayer);
+  }
+  lvCableLayer.clearLayers();
+  lvCableLayer.addData({type:'FeatureCollection',features:feats});
+}
 
-// Transformers: fixed-size, always-clickable markers. Only the ones currently in
-// view are instantiated (from zoom 14), so all 27.6k never burden the map at once.
+// Transformers: fixed-size, always-clickable markers. Only the in-view ones exist.
 const lvTx=L.layerGroup();
 let lvTxData=null, lvTxLoading=false;
 function txPopup(p){return `<div class="pt">LV transformer</div>`
@@ -344,7 +443,7 @@ function renderLvTx(){
   for(const f of lvTxData.features){
     const c=f.geometry.coordinates;            // [lng,lat]
     if(!b.contains([c[1],c[0]])) continue;
-    L.circleMarker([c[1],c[0]],{radius:5,color:'#000',weight:1.5,fillColor:'#ffd400',fillOpacity:1})
+    L.circleMarker([c[1],c[0]],{radius:5,color:'#3A2E00',weight:1.5,fillColor:'#FFC400',fillOpacity:1})
       .bindPopup(txPopup(f.properties||{}),{className:'tt'}).addTo(lvTx);
   }
 }
@@ -354,14 +453,153 @@ function syncLvTx(){
   if(lvTxLoading) return; lvTxLoading=true;
   fetch('lv_transformers.geojson').then(r=>r.json()).then(fc=>{lvTxData=fc;lvTxLoading=false;renderLvTx();}).catch(()=>{lvTxLoading=false;});
 }
-const lvNetwork=L.layerGroup([lvCables,lvTx]);
-lvNetwork.on('add',syncLvTx);
-map.on('moveend',syncLvTx);
+function syncLv(){ syncLvTx(); renderLvCables(); }
+const lvNetwork=L.layerGroup([lvTx]);   // cables added lazily into it by renderLvCables
+lvNetwork.on('add',syncLv);
+lvNetwork.on('remove',()=>{ lvTx.clearLayers(); if(lvCableLayer)lvCableLayer.clearLayers(); });
+map.on('moveend',syncLv);
 
-const overlays={};
-ORDER.forEach(k=>overlays[`<span class="ln" style="border-color:${CAT[k].c}"></span>${CAT[k].label}`]=layers[k]);
-overlays['<span class="ln" style="border:none;background:linear-gradient(90deg,#1a9641 0 33%,#f0a000 33% 66%,#d7191c 66%)"></span>LV network <small style="color:#888">(zoom in)</small>']=lvNetwork;
-L.control.layers(bases,overlays,{collapsed:false,position:'topright'}).addTo(map);
+// ---- Layer control: custom "LayerDeck" (Power group -> HV + LV) -------------
+const FX = {
+  hv:'#6A2FBF', lv:'#22B8D9',
+  train:'#2B2F36', water:'#1C8FB0', sewage:'#8A6A45', gas:'#E8730C', fuel:'#C026A8',
+};
+const FX_RAGC = { g:'#2E9E5B', a:'#E8A317', r:'#D5392B', x:'#9AA0A6' };
+const ICON = {
+  hv:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
+  lv:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18h4l2-6 3 9 2-12 2 6h3"/></svg>',
+  train:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="13" rx="3"/><path d="M5 11h14M9 20l-2 2M15 20l2 2"/><circle cx="8.5" cy="13" r="1"/><circle cx="15.5" cy="13" r="1"/></svg>',
+  water:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7 6 11a6 6 0 1 0 12 0L12 2.7z"/></svg>',
+  sewage:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+  gas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s5 4.5 5 9a5 5 0 0 1-10 0c0-1.7.8-3.2 1.5-4.2C9.5 9 12 7 12 3z"/></svg>',
+  fuel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v15M3 20h13M14 9h2.5a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg>',
+};
+const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+const LeafLayerDeck = L.Control.extend({
+  options:{ position:'topright' },
+  initialize:function(cfg, opts){ L.setOptions(this, opts||{}); this._cfg = cfg; },
+  onAdd:function(){
+    const cfg = this._cfg, m = cfg.map;
+    const root = L.DomUtil.create('div','fx-deck');
+    L.DomEvent.disableClickPropagation(root);
+    L.DomEvent.disableScrollPropagation(root);
+    root.innerHTML = this._template(cfg);
+    const baseNames = Object.keys(cfg.bases);
+    root.querySelectorAll('[data-base]').forEach(el => {
+      L.DomEvent.on(el, 'click', () => {
+        const name = el.getAttribute('data-base');
+        baseNames.forEach(n => { if (m.hasLayer(cfg.bases[n])) m.removeLayer(cfg.bases[n]); });
+        cfg.bases[name].addTo(m);
+        cfg.bases[name].bringToBack && cfg.bases[name].bringToBack();
+        root.querySelectorAll('[data-base]').forEach(b => b.classList.toggle('on', b === el));
+      });
+    });
+    const leafMap = { train:cfg.layers.train, water:cfg.layers.water,
+                      sewage:cfg.layers.sewage, gas:cfg.layers.gas, fuel:cfg.layers.fuel };
+    root.querySelectorAll('.fx-chip[data-leaf]').forEach(chip => {
+      const layer = leafMap[chip.getAttribute('data-leaf')];
+      chip.classList.toggle('on', m.hasLayer(layer));
+      L.DomEvent.on(chip, 'click', () => this._toggle(chip, layer, m));
+    });
+    this._wirePower(root, m, cfg);
+    return root;
+  },
+  _toggle:function(chip, layer, m){
+    if (m.hasLayer(layer)) { m.removeLayer(layer); chip.classList.remove('on'); }
+    else {
+      m.addLayer(layer); chip.classList.add('on');
+      chip.classList.add('pulse'); setTimeout(() => chip.classList.remove('pulse'), 440);
+    }
+  },
+  _wirePower:function(root, m, cfg){
+    const group  = root.querySelector('[data-power]');
+    const parent = group.querySelector('.fx-chip.parent');
+    const drawer = group.querySelector('.fx-subs');
+    const hvChip = group.querySelector('[data-child="hv"]');
+    const lvChip = group.querySelector('[data-child="lv"]');
+    const legend = group.querySelector('[data-rag]');
+    const HV = cfg.layers.power, LV = cfg.lvNetwork;
+    const refreshParent = () => {
+      const hvOn = m.hasLayer(HV), lvOn = m.hasLayer(LV);
+      hvChip.classList.toggle('on', hvOn);
+      lvChip.classList.toggle('on', lvOn);
+      legend.classList.toggle('is-on', lvOn);
+      parent.classList.remove('on','partial');
+      if (hvOn && lvOn) parent.classList.add('on');
+      else if (hvOn || lvOn) parent.classList.add('partial');
+      if (group.classList.contains('open'))
+        drawer.style.height = drawer.scrollHeight + 'px';
+    };
+    const setOpen = (o) => {
+      group.classList.toggle('open', o);
+      drawer.style.height = o ? drawer.scrollHeight + 'px' : '0px';
+    };
+    L.DomEvent.on(parent.querySelector('.fx-disc'), 'click', (e) => {
+      L.DomEvent.stop(e); setOpen(!group.classList.contains('open'));
+    });
+    L.DomEvent.on(parent.querySelector('.fx-puck'), 'click', (e) => {
+      L.DomEvent.stop(e);
+      const anyOn = m.hasLayer(HV) || m.hasLayer(LV);
+      if (anyOn) { m.removeLayer(HV); m.removeLayer(LV); }
+      else { m.addLayer(HV); m.addLayer(LV); setOpen(true); }
+      refreshParent();
+    });
+    L.DomEvent.on(hvChip, 'click', () => { this._toggle(hvChip, HV, m); refreshParent(); });
+    L.DomEvent.on(lvChip, 'click', () => { this._toggle(lvChip, LV, m); refreshParent(); });
+    refreshParent();
+    requestAnimationFrame(() => setOpen(m.hasLayer(HV) || m.hasLayer(LV)));
+  },
+  _chip:function(key, label, icon, color, attr){
+    return `<button class="fx-chip" ${attr}="${key}" style="--c:${color}">
+      <span class="fx-puck">${icon}</span>
+      <span class="fx-name">${label}</span>
+      <span class="fx-bar"></span>
+      <span class="fx-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-12"/></svg></span>
+    </button>`;
+  },
+  _template:function(cfg){
+    const baseChips = Object.keys(cfg.bases).map((n,i) =>
+      `<button class="fx-base${(n===cfg.baseDefault)||(cfg.baseDefault==null&&i===0)?' on':''}" data-base="${n}" title="${n}">${n.replace(/\s*\(.*\)$/,'').replace('Satellite + labels','Sat + labels')}</button>`
+    ).join('');
+    const leaves = [
+      ['train','Trains',ICON.train,FX.train],
+      ['water','Water',ICON.water,FX.water],
+      ['sewage','Sewage',ICON.sewage,FX.sewage],
+      ['gas','Gas',ICON.gas,FX.gas],
+      ['fuel','Oil &amp; chemicals',ICON.fuel,FX.fuel],
+    ].map(([k,l,ic,c]) => this._chip(k,l,ic,c,'data-leaf')).join('');
+    return `
+      <div class="fx-head"><span class="fx-title">Layers</span></div>
+      <div class="fx-eyebrow">Basemap</div>
+      <div class="fx-seg">${baseChips}</div>
+      <div class="fx-eyebrow">Overlays</div>
+      <div class="fx-chips">
+        <div class="fx-group" data-power>
+          <button class="fx-chip parent" style="--c:${FX.hv}">
+            <span class="fx-puck">${ICON.hv}</span>
+            <span class="fx-name">Power</span>
+            <span class="fx-disc" title="Show / hide HV &amp; LV">${CHEV}</span>
+          </button>
+          <div class="fx-subs">
+            ${this._chip('hv','HV network',ICON.hv,FX.hv,'data-child')}
+            ${this._chip('lv','LV network <small>z16+</small>',ICON.lv,FX.lv,'data-child')}
+            <div class="fx-rag" data-rag>
+              <div class="fx-rag-title">LV capacity</div>
+              <div class="fx-rag-bar"></div>
+              <div class="fx-rag-rows">
+                <span><i style="background:${FX_RAGC.g}"></i>Spare</span>
+                <span><i style="background:${FX_RAGC.a}"></i>Limited</span>
+                <span><i style="background:${FX_RAGC.r}"></i>At capacity</span>
+                <span><i class="dot" style="background:#FFC400;border-color:#3A2E00"></i>Transformer</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        ${leaves}
+      </div>`;
+  },
+});
+new LeafLayerDeck({ map, bases, baseDefault:'Street (OSM)', layers, lvNetwork }).addTo(map);
 
 map.fitBounds(layers.power.getBounds().pad(0.03));
 

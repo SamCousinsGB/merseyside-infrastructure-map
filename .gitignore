@@ -4,8 +4,8 @@ __pycache__/
 
 # Build-time only (the published map needs none of this)
 node_modules/
-# Raw LV cable download is huge (~300 MB) and transient; only its tiles are committed.
-# (lv_transformers.geojson IS committed - the map loads it at runtime for the
-#  clickable transformer markers.)
+# Large/transient LV build intermediates; only tiles/lvgeo + lv_transformers.geojson
+# are committed (lv_transformers.geojson IS loaded at runtime for the markers).
 lv_cables.geojson
+lv_cables_merged.geojson
 *.geojson.tmp
