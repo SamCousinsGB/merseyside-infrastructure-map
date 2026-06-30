@@ -15,14 +15,13 @@ category; **solid = overground, dashed = underground / tunnel.**
 
 | Layer | Contents |
 |-------|----------|
-| **Power → HV** | High-voltage network: substations, overhead lines and underground cables (SP Manweb, from OSM) |
+| **Power → HV** | High-voltage network: substations, overhead lines, underground cables and power stations (SP Manweb / OSM) |
 | **Power → LV** | SP Manweb **low-voltage** cables + distribution transformers (optionally shaded by spare network capacity) |
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
-| **Water** | Reservoirs, dams, water treatment works, towers, clean-water pumping stations, and **water pipelines** |
-| **Sewage** | Wastewater treatment works + sewage pumping stations |
-| **Gas** | Gas pipelines |
-| **Oil & chemicals** | Oil, fuel, ethylene and petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow) |
-| **Industrial** | Tank farms (Stanlow/Tranmere/Eastham), gas holders, power stations and industrial chimneys |
+| **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
+| **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
+| **Gas** | Gas pipelines + gas holders |
+| **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
 Networks (not OSM). It is **off by default**; transformers appear from zoom 14

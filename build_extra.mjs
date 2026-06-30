@@ -90,8 +90,21 @@ for (const e of load(PIPES)) {
 }
 const pipeN = out.length;
 
-// ----- industrial structures + weirs ----------------------------------------
+// ----- tanks / holders / chimneys / power plants / weirs ---------------------
+// Each goes to its logical UTILITY category (no generic "industrial" bucket):
+//   gas holders + gas/LPG tanks -> gas      water tanks -> water
+//   sewage/sludge tanks -> sewage           oil/fuel/chemical + untagged tanks
+//   chimneys -> oil & chemicals (fuel)      -> oil & chemicals (the Stanlow/
+//   power stations -> power                    Tranmere/Eastham petrochem farms)
 const INDUSTRIAL_CONTENT = /oil|fuel|diesel|kerosene|petrol|lpg|gas|chemical|jet|avgas|oxygen|ethylene|naphtha|bitumen/i;
+function tankCat(content) {
+  const c = (content || "").toLowerCase();
+  if (/gas|lpg|propane|butane/.test(c)) return ["gas", content ? `${content} tank` : "gas tank"];
+  if (/^(water|potable|raw_water|treated_water)$/.test(c)) return ["water", "water tank"];
+  if (/sewage|wastewater|sludge|slurry|manure|effluent|digestate/.test(c)) return ["sewage", `${content} tank`];
+  if (/oil|fuel|diesel|kerosene|petrol|jet|avgas|oxygen|ethylene|chemical|bitumen|naphtha/.test(c)) return ["fuel", `${content} tank`];
+  return ["fuel", "storage tank"]; // big untagged tanks = the oil/chemical farms
+}
 let tanks = 0, holders = 0, chimneys = 0, plants = 0, weirs = 0;
 for (const e of load(INDUS)) {
   const t = e.tags || {};
@@ -99,31 +112,28 @@ for (const e of load(INDUS)) {
   const closed = e.geometry && e.geometry.length > 3;
   const poly = closed ? { type: "Polygon", coordinates: [ring(e.geometry)] } : null;
   const c = centroid(e); const pt = c ? { type: "Point", coordinates: c } : null;
+  const id = `${e.type}/${e.id}`;
 
   if (mm === "storage_tank" || mm === "tank") {
     const a = e.geometry ? areaM2(e.geometry) : 0;
-    const indus = a >= 200 || INDUSTRIAL_CONTENT.test(t.content || t.substance || "");
-    if (!indus) continue; // drop small/agricultural tanks
-    out.push(feat(poly || pt, { id: `${e.type}/${e.id}`, osm: osmUrl(e), name: t.name || "",
-      cat: "industrial", kind: t.content ? `${t.content} tank` : "storage tank", ug: false, tags: small(t) }));
+    if (!(a >= 200 || INDUSTRIAL_CONTENT.test(t.content || t.substance || ""))) continue; // drop small/agricultural
+    const [cat, kind] = tankCat(t.content || t.substance);
+    out.push(feat(poly || pt, { id, osm: osmUrl(e), name: t.name || "", cat, kind, ug: false, tags: small(t) }));
     tanks++;
   } else if (mm === "gasometer") {
-    out.push(feat(poly || pt, { id: `${e.type}/${e.id}`, osm: osmUrl(e), name: t.name || "",
-      cat: "industrial", kind: "gas holder", ug: false, tags: small(t) }));
+    out.push(feat(poly || pt, { id, osm: osmUrl(e), name: t.name || "", cat: "gas", kind: "gas holder", ug: false, tags: small(t) }));
     holders++;
   } else if (mm === "chimney") {
     if (!pt) continue;
-    out.push(feat(pt, { id: `${e.type}/${e.id}`, osm: osmUrl(e), name: t.name || "",
-      cat: "industrial", kind: "chimney", ug: false, tags: small(t) }));
+    out.push(feat(pt, { id, osm: osmUrl(e), name: t.name || "", cat: "fuel", kind: "chimney", ug: false, tags: small(t) }));
     chimneys++;
   } else if (isPlant) {
     const src = t["plant:source"] || t["generator:source"] || "";
-    out.push(feat(poly || pt, { id: `${e.type}/${e.id}`, osm: osmUrl(e), name: t.name || "",
-      cat: "industrial", kind: src ? `${src} power station` : "power station", ug: false, tags: small(t) }));
+    out.push(feat(poly || pt, { id, osm: osmUrl(e), name: t.name || "", cat: "power", kind: src ? `${src} power station` : "power station", ug: false, tags: small(t) }));
     plants++;
   } else if (isWeir) {
     if (e.type === "way" && e.geometry) out.push(feat({ type: "LineString", coordinates: e.geometry.map((n) => [n.lon, n.lat]) },
-      { id: `${e.type}/${e.id}`, osm: osmUrl(e), name: t.name || "", cat: "water", kind: "weir", ug: false, tags: small(t) }));
+      { id, osm: osmUrl(e), name: t.name || "", cat: "water", kind: "weir", ug: false, tags: small(t) }));
     weirs++;
   }
 }
