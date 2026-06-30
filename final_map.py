@@ -291,10 +291,12 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-group.open .fx-subs{padding-bottom:8px}
 .fx-subs .fx-chip{margin-top:6px}
 .fx-subs .fx-chip:first-child{margin-top:2px}
-.fx-rag{max-height:0;opacity:0;overflow:hidden;
-  transition:max-height .26s cubic-bezier(.16,1,.3,1),opacity .2s ease;
-  display:flex;flex-direction:column;gap:6px;margin:0 2px}
-.fx-rag.is-on{max-height:170px;opacity:1;margin-top:8px}
+.fx-deck button:focus{outline:none}
+.fx-deck button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* inner LV panel toggles by display (not animated max-height) so the drawer
+   always measures the correct height and never clips the capacity controls */
+.fx-rag{display:none;flex-direction:column;gap:6px;margin:0 2px}
+.fx-rag.is-on{display:flex;margin-top:8px}
 .fx-rag-tx{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted)}
 .fx-rag-tx i{width:9px;height:9px;border-radius:50%;border:1.5px solid;flex:0 0 auto}
 .fx-cap{display:flex;align-items:center;gap:8px;width:100%;border:none;background:transparent;
@@ -304,9 +306,8 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
   background:#fff;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
 .fx-cap.on .fx-cap-sw{background:var(--accent)}
 .fx-cap.on .fx-cap-sw:after{transform:translateX(11px)}
-.fx-rag-legend{max-height:0;opacity:0;overflow:hidden;transition:max-height .24s ease,opacity .2s ease;
-  display:flex;flex-direction:column;gap:5px}
-.fx-rag.cap-on .fx-rag-legend{max-height:60px;opacity:1}
+.fx-rag-legend{display:none;flex-direction:column;gap:5px}
+.fx-rag.cap-on .fx-rag-legend{display:flex;margin-top:2px}
 .fx-rag-bar{height:6px;border-radius:4px;
   background:linear-gradient(90deg,#2E9E5B 0 33%,#E8A317 33% 66%,#D5392B 66%)}
 .fx-rag-rows{display:flex;flex-wrap:wrap;gap:4px 11px;font-size:10px;color:var(--muted)}
