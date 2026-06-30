@@ -322,6 +322,9 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .pn{color:#111}.pm{color:#888;margin:1px 0 4px}
 .leaflet-popup-content table{border-collapse:collapse;margin-top:5px}
 .leaflet-popup-content td{border-top:1px solid #eee;padding:1px 7px 1px 0}.k{color:#999}
+.gm{display:flex;gap:14px;margin-top:8px;padding-top:7px;border-top:1px solid #eee}
+.gm a{color:#1a73e8;font-weight:600;text-decoration:none;font-size:12px}
+.gm a:hover{text-decoration:underline}
 </style>
 </head><body><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -354,6 +357,10 @@ const bases={
 };
 bases['Street (OSM)'].addTo(map);
 
+// Google Maps + Street View links for a clicked point.
+function gmaps(lat,lon){const ll=lat.toFixed(6)+','+lon.toFixed(6);
+  return `<div class="gm"><a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${ll}" target="_blank" rel="noopener">Street View</a>`
+    +`<a href="https://www.google.com/maps/search/?api=1&query=${ll}" target="_blank" rel="noopener">Google Maps</a></div>`;}
 function pop(p){const t=p.tags||{};
   const rows=Object.entries(t).map(([k,v])=>`<tr><td class="k">${k}</td><td>${v}</td></tr>`).join('');
   const meta=[CAT[p.cat].label,p.ug?'underground':null,p.voltage?(p.voltage+' V'):null].filter(Boolean).join(' &middot; ');
@@ -368,7 +375,9 @@ function catLayer(cat){const col=CAT[cat].c;
       return{color:col,weight:p.kind==='cable'?3.5:2.5,opacity:.9,
         dashArray:p.ug?'5 5':null,fillColor:col,fillOpacity:.4};},
     pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:col,fillOpacity:.95}),
-    onEachFeature:(f,l)=>l.bindPopup(pop(f.properties)),
+    onEachFeature:(f,l)=>l.on('click',e=>{
+      const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+      L.popup().setLatLng(ll).setContent(pop(f.properties)+gmaps(ll.lat,ll.lng)).openOn(map);}),
   });}
 
 // One toggleable layer per category, built straight from ORDER so the two
@@ -380,7 +389,7 @@ data.features.filter(f=>f.properties.traction).forEach(f=>{
   const c=L.geoJSON(f).getBounds().getCenter();
   L.circleMarker(c,{radius:7,color:'#15202B',weight:2,fillColor:'#00C2A8',fillOpacity:.95})
     .bindTooltip(f.properties.label,{permanent:true,direction:'top',className:'lab',offset:[0,-7]})
-    .bindPopup(pop(f.properties)).addTo(layers.train);
+    .bindPopup(pop(f.properties)+gmaps(c.lat,c.lng)).addTo(layers.train);
 });
 ORDER.forEach(k=>layers[k].addTo(map));
 
@@ -412,7 +421,8 @@ function lvCablePopup(e,p){
     `<div class="pt">LV cable</div><div class="pm">SP Manweb low-voltage network</div>`
     +`<table><tr><td class="k">cable</td><td>${p.type||'-'}</td></tr>`
     +`<tr><td class="k">voltage</td><td>${p.v||230} V</td></tr>`
-    +`<tr><td class="k">capacity</td><td>${RAGT[p.rag]||RAGT.x}</td></tr></table>`).openOn(map);
+    +`<tr><td class="k">capacity</td><td>${RAGT[p.rag]||RAGT.x}</td></tr></table>`
+    +gmaps(e.latlng.lat,e.latlng.lng)).openOn(map);
 }
 async function lvFetchTile(x,y){
   const k=x+'/'+y;
@@ -447,9 +457,10 @@ async function renderLvCables(){
 // Transformers: fixed-size, always-clickable markers. Only the in-view ones exist.
 const lvTx=L.layerGroup();
 let lvTxData=null, lvTxLoading=false;
-function txPopup(p){return `<div class="pt">LV transformer</div>`
+function txPopup(p,lat,lon){return `<div class="pt">LV transformer</div>`
   +`<div class="pm">distribution substation &middot; ${RAGT[p.rag]||RAGT.x}</div>`
-  +(p.id?`<table><tr><td class="k">ref</td><td>${p.id}</td></tr></table>`:'');}
+  +(p.id?`<table><tr><td class="k">ref</td><td>${p.id}</td></tr></table>`:'')
+  +gmaps(lat,lon);}
 function renderLvTx(){
   lvTx.clearLayers();
   if(!lvTxData||!map.hasLayer(lvNetwork)||map.getZoom()<14) return;
@@ -458,7 +469,7 @@ function renderLvTx(){
     const c=f.geometry.coordinates;            // [lng,lat]
     if(!b.contains([c[1],c[0]])) continue;
     L.circleMarker([c[1],c[0]],{radius:5,color:'#3A2E00',weight:1.5,fillColor:'#FFC400',fillOpacity:1})
-      .bindPopup(txPopup(f.properties||{}),{className:'tt'}).addTo(lvTx);
+      .bindPopup(txPopup(f.properties||{},c[1],c[0]),{className:'tt'}).addTo(lvTx);
   }
 }
 function syncLvTx(){

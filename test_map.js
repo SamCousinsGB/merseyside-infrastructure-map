@@ -14,7 +14,7 @@ function layer() {
     addTo() { return o; }, addLayer() { return o; },
     bindTooltip() { return o; }, bindPopup() { return o; }, on() { return o; },
     clearLayers() { return o; }, addData() { return o; },
-    getBounds() { return { getCenter() { return [0, 0]; }, pad() { return this; } }; },
+    getBounds() { return { getCenter() { return { lat: 0, lng: 0 }; }, pad() { return this; } }; },
   };
   return o;
 }
