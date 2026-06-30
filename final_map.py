@@ -286,13 +286,12 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-chip.parent .fx-puck{background:#eef1f5;color:var(--c)}
 .fx-chip.parent.partial .fx-puck{background:var(--c);color:#fff;opacity:.55}
 .fx-chip.parent.on .fx-puck{background:var(--c);color:#fff;opacity:1;box-shadow:0 3px 10px -2px var(--c)}
-.fx-subs{height:0;overflow:hidden;transition:height .28s cubic-bezier(.4,0,.2,1);
+.fx-subs{height:0;overflow:hidden;box-sizing:border-box;transition:height .28s cubic-bezier(.4,0,.2,1);
   padding:0 8px;background:linear-gradient(#fbfcfe,#fff)}
 .fx-group.open .fx-subs{padding-bottom:8px}
 .fx-subs .fx-chip{margin-top:6px}
 .fx-subs .fx-chip:first-child{margin-top:2px}
 .fx-deck button:focus{outline:none}
-.fx-deck button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* inner LV panel toggles by display (not animated max-height) so the drawer
    always measures the correct height and never clips the capacity controls */
 .fx-rag{display:none;flex-direction:column;gap:6px;margin:0 2px}
@@ -534,6 +533,10 @@ const LeafLayerDeck = L.Control.extend({
     const lvChip = group.querySelector('[data-child="lv"]');
     const legend = group.querySelector('[data-rag]');
     const HV = cfg.layers.power, LV = cfg.lvNetwork;
+    // measure the drawer's natural content height (briefly at height:auto) instead
+    // of scrollHeight, which includes padding and never shrinks -> the old code grew
+    // the drawer 8px per toggle and never collapsed it back.
+    const measure = () => { const p=drawer.style.height; drawer.style.height='auto'; const h=drawer.scrollHeight; drawer.style.height=p; return h; };
     const refreshParent = () => {
       const hvOn = m.hasLayer(HV), lvOn = m.hasLayer(LV);
       hvChip.classList.toggle('on', hvOn);
@@ -543,11 +546,11 @@ const LeafLayerDeck = L.Control.extend({
       if (hvOn && lvOn) parent.classList.add('on');
       else if (hvOn || lvOn) parent.classList.add('partial');
       if (group.classList.contains('open'))
-        drawer.style.height = drawer.scrollHeight + 'px';
+        drawer.style.height = measure() + 'px';
     };
     const setOpen = (o) => {
       group.classList.toggle('open', o);
-      drawer.style.height = o ? drawer.scrollHeight + 'px' : '0px';
+      drawer.style.height = o ? measure() + 'px' : '0px';
     };
     L.DomEvent.on(parent.querySelector('.fx-disc'), 'click', (e) => {
       L.DomEvent.stop(e); setOpen(!group.classList.contains('open'));
@@ -568,7 +571,7 @@ const LeafLayerDeck = L.Control.extend({
       captog.classList.toggle('on', on);
       legend.classList.toggle('cap-on', on);
       cfg.onCapacity && cfg.onCapacity(on);
-      if (group.classList.contains('open')) drawer.style.height = drawer.scrollHeight + 'px';
+      if (group.classList.contains('open')) drawer.style.height = measure() + 'px';
     });
     refreshParent();
     requestAnimationFrame(() => setOpen(m.hasLayer(HV) || m.hasLayer(LV)));
