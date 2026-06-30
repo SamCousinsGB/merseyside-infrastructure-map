@@ -8,4 +8,7 @@ node_modules/
 # are committed (lv_transformers.geojson IS loaded at runtime for the markers).
 lv_cables.geojson
 lv_cables_merged.geojson
+# Raw Overpass dumps for the extra-infrastructure build (extra_infra.geojson IS committed)
+osm_pipelines.json
+osm_industrial.json
 *.geojson.tmp

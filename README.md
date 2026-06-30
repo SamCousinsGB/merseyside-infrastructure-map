@@ -21,7 +21,8 @@ category; **solid = overground, dashed = underground / tunnel.**
 | **Water** | Reservoirs, dams, water treatment works, towers, clean-water pumping stations, and **water pipelines** |
 | **Sewage** | Wastewater treatment works + sewage pumping stations |
 | **Gas** | Gas pipelines |
-| **Oil & chemicals** | Oil, fuel and petrochemical pipelines (e.g. Stanlow) |
+| **Oil & chemicals** | Oil, fuel, ethylene and petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow) |
+| **Industrial** | Tank farms (Stanlow/Tranmere/Eastham), gas holders, power stations and industrial chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
 Networks (not OSM). It is **off by default**; transformers appear from zoom 14
@@ -74,6 +75,9 @@ only the cells in view and draws them as crisp `L.geoJSON` canvas polylines.
 - `infra_probe.json` — treatment works / towers / pumping stations (centroids)
 - `tiles/lvgeo/`, `lv_transformers.geojson` — LV cables + transformers from SP Energy
   Networks ConnectMore (`connectmore-costestimator:lv_cables_map_view`, `lv_transformers_map_view`)
+- `extra_infra.geojson` — extra OSM infrastructure (full pipeline routes, tank
+  farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
+  merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`
 
 ## Notes & caveats
 - **Sewers are not mapped** — they are essentially absent from OpenStreetMap

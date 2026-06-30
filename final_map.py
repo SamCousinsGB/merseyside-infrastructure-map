@@ -337,8 +337,9 @@ const CAT={
   sewage:{c:'#8A6A45',label:'Sewage'},
   gas   :{c:'#E8730C',label:'Gas'},
   fuel  :{c:'#C026A8',label:'Oil &amp; chemicals'},
+  industrial:{c:'#5A6B7B',label:'Industrial'},
 };
-const ORDER=['power','train','water','sewage','gas','fuel'];
+const ORDER=['power','train','water','sewage','gas','fuel','industrial'];
 const map=L.map('map',{preferCanvas:true,maxZoom:19});
 const bases={
   'Street (OSM)':L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -392,6 +393,14 @@ data.features.filter(f=>f.properties.traction).forEach(f=>{
     .bindPopup(pop(f.properties)+gmaps(c.lat,c.lng)).addTo(layers.train);
 });
 ORDER.forEach(k=>layers[k].addTo(map));
+
+// Extra OSM infrastructure (full pipeline routes + industrial sites + weirs),
+// fetched at runtime and merged into the layers, de-duplicated by OSM id.
+const _extraIds=new Set(data.features.map(f=>f.properties.id));
+fetch('extra_infra.geojson').then(r=>r.json()).then(fc=>{
+  for(const f of fc.features){const p=f.properties; if(_extraIds.has(p.id))continue; _extraIds.add(p.id);
+    if(layers[p.cat]) layers[p.cat].addData(f);}
+}).catch(()=>{});
 
 // ---- LV (low-voltage) network ------------------------------------------------
 // SP Energy Networks "ConnectMore" data, kept local. Two parts, off by default:
@@ -487,7 +496,7 @@ map.on('moveend',syncLv);
 // ---- Layer control: custom "LayerDeck" (Power group -> HV + LV) -------------
 const FX = {
   hv:'#6A2FBF', lv:'#22B8D9',
-  train:'#2B2F36', water:'#1C8FB0', sewage:'#8A6A45', gas:'#E8730C', fuel:'#C026A8',
+  train:'#2B2F36', water:'#1C8FB0', sewage:'#8A6A45', gas:'#E8730C', fuel:'#C026A8', industrial:'#5A6B7B',
 };
 const FX_RAGC = { g:'#2E9E5B', a:'#E8A317', r:'#D5392B', x:'#9AA0A6' };
 const ICON = {
@@ -498,6 +507,7 @@ const ICON = {
   sewage:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
   gas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s5 4.5 5 9a5 5 0 0 1-10 0c0-1.7.8-3.2 1.5-4.2C9.5 9 12 7 12 3z"/></svg>',
   fuel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v15M3 20h13M14 9h2.5a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg>',
+  industrial:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M4 21V11l5 3V11l5 3V6h4v15"/><path d="M8 21v-3M13 21v-3"/></svg>',
 };
 const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 const LeafLayerDeck = L.Control.extend({
@@ -520,7 +530,8 @@ const LeafLayerDeck = L.Control.extend({
       });
     });
     const leafMap = { train:cfg.layers.train, water:cfg.layers.water,
-                      sewage:cfg.layers.sewage, gas:cfg.layers.gas, fuel:cfg.layers.fuel };
+                      sewage:cfg.layers.sewage, gas:cfg.layers.gas, fuel:cfg.layers.fuel,
+                      industrial:cfg.layers.industrial };
     root.querySelectorAll('.fx-chip[data-leaf]').forEach(chip => {
       const layer = leafMap[chip.getAttribute('data-leaf')];
       chip.classList.toggle('on', m.hasLayer(layer));
@@ -605,6 +616,7 @@ const LeafLayerDeck = L.Control.extend({
       ['sewage','Sewage',ICON.sewage,FX.sewage],
       ['gas','Gas',ICON.gas,FX.gas],
       ['fuel','Oil &amp; chemicals',ICON.fuel,FX.fuel],
+      ['industrial','Industrial',ICON.industrial,FX.industrial],
     ].map(([k,l,ic,c]) => this._chip(k,l,ic,c,'data-leaf')).join('');
     return `
       <div class="fx-head"><span class="fx-title">Layers</span></div>

@@ -51,6 +51,9 @@ L.Control = { extend(proto) {
   return C;
 } };
 
+// the page fetches extra_infra.geojson at load; stub it so the test runs offline
+global.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({ features: [] }) });
+
 try {
   new Function('L', app)(L);
   console.log(`OK: script ran clean, exercised ${featuresExercised} features`);
