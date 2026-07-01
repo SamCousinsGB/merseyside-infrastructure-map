@@ -28,8 +28,22 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-deck::-webkit-scrollbar-thumb{background:#cbd2dc;border-radius:8px;border:2px solid var(--bg)}
 .fx-deck::-webkit-scrollbar-thumb:hover{background:#aab3c0}
 @keyframes fx-in{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1;transform:none}}
-.fx-head{padding:2px 4px 6px}
+.fx-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+  border:none;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:2px 4px 6px}
 .fx-title{font-weight:700;letter-spacing:.3px;font-size:13px}
+.fx-collapse{flex:0 0 auto;display:grid;place-items:center;width:22px;height:22px;border-radius:7px;
+  color:var(--muted);transition:transform .26s cubic-bezier(.4,0,.2,1),background .18s,color .18s}
+.fx-collapse svg{width:16px;height:16px;transform:rotate(180deg)}
+.fx-head:hover .fx-collapse{background:#f1f5f9;color:var(--ink)}
+.fx-hint{font-size:9.5px;line-height:1.4;color:var(--muted);margin:0 4px 8px}
+.fx-hint b{color:var(--ink);font-weight:700}
+/* collapsed: show only the compact header pill — keeps the map clear (esp. on mobile) */
+.fx-deck.collapsed{width:auto}
+.fx-deck.collapsed .fx-eyebrow,.fx-deck.collapsed .fx-seg,
+.fx-deck.collapsed .fx-chips,.fx-deck.collapsed .fx-hint{display:none}
+.fx-deck.collapsed .fx-head{padding:0}
+.fx-deck.collapsed .fx-collapse svg{transform:rotate(0)}
+@media (max-width:400px){.fx-deck{width:212px}}
 .fx-eyebrow{font-size:9.5px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;
   color:var(--muted);margin:4px 4px 4px}
 .fx-seg{display:flex;flex-wrap:wrap;gap:4px;background:#f5f7fa;padding:4px;border-radius:11px}
@@ -69,11 +83,16 @@ html,body,#map{height:100%;margin:0}#map{width:100%}
 .fx-group.open{border-color:#dfe5ec}
 .fx-group .fx-chip.parent{border:none;border-radius:0;background:transparent}
 .fx-group .fx-chip.parent:hover{box-shadow:none;background:#fafbfc}
-.fx-group .fx-chip.parent:before{display:none}
+/* parent row tints when the group is on (full) or partial, so enabled groups read clearly */
+.fx-group .fx-chip.parent:before{display:block}
+.fx-group .fx-chip.parent.partial:before{opacity:.06;transform:scaleX(1)}
+/* the chevron is a distinct, self-contained button (persistent fill) so it reads
+   as "expand", separate from tapping the row to toggle the group on/off */
 .fx-disc{position:relative;z-index:2;flex:0 0 auto;display:grid;place-items:center;
-  width:24px;height:24px;border-radius:7px;color:var(--muted);transition:.2s;cursor:pointer}
-.fx-disc:hover{background:#f1f5f9;color:var(--ink)}
-.fx-disc svg{width:16px;height:16px;transition:transform .26s cubic-bezier(.4,0,.2,1)}
+  width:26px;height:26px;border-radius:8px;color:var(--muted);background:#eef1f6;
+  transition:.2s;cursor:pointer;margin-left:2px}
+.fx-disc:hover{background:#dde3ec;color:var(--ink)}
+.fx-disc svg{width:15px;height:15px;transition:transform .26s cubic-bezier(.4,0,.2,1)}
 .fx-group.open .fx-disc svg{transform:rotate(180deg)}
 .fx-chip.parent .fx-puck{background:#eef1f5;color:var(--c)}
 .fx-chip.parent.partial .fx-puck{background:var(--c);color:#fff;opacity:.55}
@@ -547,6 +566,20 @@ const LeafLayerDeck = L.Control.extend({
 
     // ---- groups ----
     cfg.groups.forEach(g => this._wireGroup(root, m, cfg, g));
+
+    // ---- collapsible whole deck: tap the header to hide everything but the pill.
+    //      Collapsed by default on small screens so the panel doesn't cover the map.
+    const head = root.querySelector('[data-deckhead]');
+    if (head) {
+      L.DomEvent.on(head, 'click', () => {
+        const collapsed = root.classList.toggle('collapsed');
+        head.setAttribute('aria-expanded', String(!collapsed));
+      });
+      if (window.matchMedia && window.matchMedia('(max-width: 680px)').matches) {
+        root.classList.add('collapsed');
+        head.setAttribute('aria-expanded', 'false');
+      }
+    }
     return root;
   },
 
@@ -591,16 +624,22 @@ const LeafLayerDeck = L.Control.extend({
       drawer.style.height = o ? measure() + 'px' : '0px';
     };
 
-    // chevron = disclosure only
-    L.DomEvent.on(parent.querySelector('.fx-disc'), 'click', (e) => {
-      L.DomEvent.stop(e); setOpen(!group.classList.contains('open'));
-    });
-    // master puck: any on -> all off; none on -> all on (+open)
-    L.DomEvent.on(parent.querySelector('.fx-puck'), 'click', (e) => {
+    const disc = parent.querySelector('.fx-disc');
+    // chevron (right) = expand / collapse to reveal the group's individual layers.
+    // stops propagation so it never also toggles the group on/off.
+    L.DomEvent.on(disc, 'click', (e) => {
       L.DomEvent.stop(e);
+      const open = !group.classList.contains('open');
+      setOpen(open);
+      disc.setAttribute('aria-expanded', String(open));
+    });
+    // tapping the row (puck OR label) enables / disables the whole group — the
+    // primary, obvious action. Expansion is a separate concern (the chevron).
+    L.DomEvent.on(parent, 'click', () => {
       const anyOn = kids.some(k => m.hasLayer(k.def.layer));
       if (anyOn) kids.forEach(k => { if(m.hasLayer(k.def.layer)) m.removeLayer(k.def.layer); });
-      else { kids.forEach(k => { if(!m.hasLayer(k.def.layer)) m.addLayer(k.def.layer); }); setOpen(true); }
+      else       kids.forEach(k => { if(!m.hasLayer(k.def.layer)) m.addLayer(k.def.layer); });
+      parent.classList.add('pulse'); setTimeout(() => parent.classList.remove('pulse'), 440);
       refreshParent();
     });
     // individual children
@@ -634,7 +673,7 @@ const LeafLayerDeck = L.Control.extend({
     // open groups that start with any child on (all grouped children default ON)
     // collapse groups by default (shorter deck); keep Power open — its drawer holds
     // the HV-labels toggle and the LV network + capacity controls.
-    requestAnimationFrame(() => setOpen(g.key === 'power'));
+    requestAnimationFrame(() => { const open = g.key === 'power'; setOpen(open); disc.setAttribute('aria-expanded', String(open)); });
   },
 
   _chip:function(key, label, icon, color, attr){
@@ -674,7 +713,7 @@ const LeafLayerDeck = L.Control.extend({
         <button class="fx-chip parent" style="--c:${g.color}">
           <span class="fx-puck">${g.icon}</span>
           <span class="fx-name">${g.label}</span>
-          <span class="fx-disc" title="Show / hide ${g.label}">${CHEV}</span>
+          <span class="fx-disc" title="Show ${g.label} sub-layers" aria-label="Show ${g.label} sub-layers" aria-expanded="false">${CHEV}</span>
         </button>
         <div class="fx-subs">
           ${childChips}
@@ -690,7 +729,11 @@ const LeafLayerDeck = L.Control.extend({
     const groupsHtml = cfg.groups.map(g => this._groupHtml(g)).join('\n');
     const leafChips  = cfg.leaves.map(l => this._chip(l.key, l.label, l.icon, l.color, 'data-leaf')).join('\n');
     return `
-      <div class="fx-head"><span class="fx-title">Layers</span></div>
+      <button class="fx-head" data-deckhead aria-expanded="true" title="Show / hide the layers panel">
+        <span class="fx-title">Layers</span>
+        <span class="fx-collapse">${CHEV}</span>
+      </button>
+      <div class="fx-hint">Tap a group to <b>show / hide</b> it &middot; <b>&#9662;</b> opens its individual layers</div>
       <div class="fx-eyebrow">Basemap</div>
       <div class="fx-seg">${baseChips}</div>
       <div class="fx-eyebrow">Overlays</div>
