@@ -12,3 +12,12 @@ lv_cables_merged.geojson
 osm_pipelines.json
 osm_industrial.json
 *.geojson.tmp
+
+# Build-only source inputs to final_map.py — kept on disk for rebuilds but NOT
+# served by the page (the runtime loads data.json, extra_infra.geojson,
+# lv_transformers.geojson and tiles/lvgeo only). ~29MB removed from the deploy.
+current_power.geojson
+spen_complete_revert.geojson
+merseyrail_rail.json
+infra_geom.json
+infra_probe.json
