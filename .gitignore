@@ -8,6 +8,12 @@ node_modules/
 # are committed (lv_transformers.geojson IS loaded at runtime for the markers).
 lv_cables.geojson
 lv_cables_merged.geojson
+# Same for the Cadent gas build; only tiles/gasgeo/ is committed.
+gas_pipes.geojson
+gas_pipes_merged.geojson
+# Cadent open-data portal API key. The licence is open but the portal still
+# gates downloads behind a free account, so this is a credential - never commit.
+.cadent_key
 # Raw Overpass dumps for the extra-infrastructure build (extra_infra.geojson IS committed)
 osm_pipelines.json
 osm_industrial.json

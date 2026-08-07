@@ -484,8 +484,10 @@ data.features.filter(f=>f.properties.traction).forEach(f=>{
 });
 
 // ---- ADD DEFAULT-ON LAYERS: all sub-layers + train. lvNetwork stays OFF. -----
-GROUPED.forEach(cat=>SUBKEYS[cat].forEach(k=>sub[k].addTo(map)));
-layers.train.addTo(map);
+// Every layer starts OFF; the deck adds them on demand.
+// HV / power-station labels belong to those two layers, so rebuild them the
+// moment either is switched on or off rather than waiting for a pan.
+['power.hv','power.ps'].forEach(k=>sub[k]&&sub[k].on('add remove',()=>{if(hvLabelsOn)buildHvLabels();}));
 
 // ---- runtime extra_infra merge: route each feature into its SUB-layer --------
 const _extraIds=new Set(data.features.filter(f=>!isEmbeddedPlant(f)).map(f=>f.properties.id));
@@ -505,7 +507,8 @@ fetch('extra_infra.geojson').then(r=>r.json()).then(fc=>{
 map.fitBounds([[52.95,-4.90],[53.72,-2.45]]);
 
 // ---- LV (low-voltage) network ------------------------------------------------
-// SP Energy Networks "ConnectMore" data, kept local. Two parts, off by default:
+// SP Energy Networks "ConnectMore" data, kept local. Two parts (like every
+// layer, off until switched on):
 //   cables       ~310k merged polylines (from ~1.47M source segments), served as
 //                full-precision GeoJSON tiles (tiles/lvgeo/{x}/{y}.json, z14 grid).
 //                A viewport-windowed L.geoJSON canvas layer draws only the cables
@@ -522,7 +525,7 @@ const lvLon2x=(lon,z)=>Math.floor((lon+180)/360*Math.pow(2,z));
 const lvLat2y=(lat,z)=>{const r=lat*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));};
 const LV_GRID=14, LV_MINZOOM=16, LV_MAXCACHE=80;
 const LV_PLAIN='#22B8D9';                  // default: cables in one colour
-let lvByCapacity=false;                     // toggle: colour cables by RAG capacity
+let lvByCapacity=true;                      // toggle: colour cables by RAG capacity (default on)
 function lvCableStyle(f){return{color:lvByCapacity?(RAGC[f.properties.rag]||RAGC.x):LV_PLAIN,weight:1.6,opacity:.9};}
 function setLvCapacity(on){lvByCapacity=on; if(lvCableLayer)lvCableLayer.setStyle(lvCableStyle);}
 const lvTileCache=new Map();
@@ -594,16 +597,114 @@ const lvNetwork=L.layerGroup([lvTx]);   // cables added lazily into it by render
 lvNetwork.on('add',syncLv);
 lvNetwork.on('remove',()=>{ lvTx.clearLayers(); if(lvCableLayer)lvCableLayer.clearLayers(); updateLvHint(); });
 map.on('moveend',syncLv);
-// LV only draws when zoomed in (transformers z14+, cables z16+); tell the user so
-// it doesn't look broken when toggled on from a wide view.
-const lvHint=L.control({position:'bottomleft'});
-lvHint.onAdd=()=>{const d=L.DomUtil.create('div','lvhint');d.innerHTML='&#128269; Zoom in to see the LV network';return d;};
-function updateLvHint(){
-  const show=map.hasLayer(lvNetwork)&&map.getZoom()<14;
-  if(show && !lvHint._map) lvHint.addTo(map);
-  else if(!show && lvHint._map) lvHint.remove();
+
+// ---- Cadent gas distribution network -----------------------------------------
+// Cadent "Gas Pipe Infrastructure - GPI Open" (Open Government Licence v3.0),
+// kept local as z14 GeoJSON tiles exactly like the LV cables. Two viewport-
+// windowed layers, each drawn as real canvas vectors so they stay crisp:
+//   mains     tiles/gasgeo/main - the distribution grid,          from zoom 14
+//   services  tiles/gasgeo/svc  - last-mile pipes into premises,  from zoom 17
+// Separate tile trees, so a z14 view never downloads the service geometry it
+// would not draw until z17, and either layer can be gated independently.
+// GPI Open covers the low/medium-pressure network only. Cadent's higher-pressure
+// (IP/HP) network is a "Shared" dataset needing a data sharing agreement, so it
+// is deliberately not used here.
+// Unlike the OSM layers these are drawn solid rather than dashed even though the
+// network is almost entirely buried - the same call the LV cables make, because
+// a whole dense street-level layer in dashes is unreadable. Each popup says
+// which side of the ground the pipe is on.
+// The value dictionaries are Cadent's own, from the dataset's data catalogue.
+const GAS_PRESS={LP:'Low pressure (&le;75 mbarg)',MP:'Medium pressure (&gt;75 mbarg, &le;2 barg)',
+                 IP:'Intermediate pressure (&gt;2, &le;7 barg)',HP:'High pressure (&gt;7 barg)'};
+const GAS_MAT={CI:'Cast iron',DI:'Ductile iron',PE:'Polyethylene',SI:'Spun iron',ST:'Steel',
+               AS:'Asbestos',CO:'Copper',LE:'Lead',PV:'PVC',FP:'Flexible polyethylene',
+               GL:'Galvanised',UN:'Unknown'};
+const GAS_TYPE={m:'Gas main',s:'Gas service pipe',r:'Gas riser',
+                n:'NTS transmission pipe',l:'LTS transmission pipe',u:'Gas pipe'};
+const GAS_DU={MM:'mm',I:'in',UN:''};
+const GAS_GRID=14, GAS_MAXCACHE=80;
+const GAS_MAIN_MINZOOM=14, GAS_SVC_MINZOOM=17;
+const GAS_COL={LP:'#E8730C',MP:'#B4530A'};     // mains, darker as pressure rises
+const GAS_SVC_COL='#F2B279';                    // service pipes / risers
+const isGasSvc=p=>p.t==='s'||p.t==='r';
+function gasStyle(f){const p=f.properties;
+  if(isGasSvc(p)) return{color:GAS_SVC_COL,weight:1,opacity:.85};
+  return{color:GAS_COL[p.p]||GAS_COL.LP,weight:p.p==='MP'?2.6:1.8,opacity:.9};}
+function gasPopup(e,p){
+  const u=GAS_DU[p.du]!==undefined?GAS_DU[p.du]:'';
+  const dia=(p.d!=null&&p.d>0)?(p.d+(u?'&nbsp;'+u:'')):'-';
+  const rows=[['pressure',GAS_PRESS[p.p]||p.p||'-'],
+              ['material',GAS_MAT[p.m]||p.m||'-'],
+              ['diameter',dia],
+              ['installed',p.yr||'-'],
+              ['position',p.ag?'above ground':'below ground']]
+    .map(([k,v])=>`<tr><td class="k">${k}</td><td>${v}</td></tr>`).join('');
+  L.popup({className:'tt'}).setLatLng(e.latlng).setContent(
+    `<div class="pt">${GAS_TYPE[p.t]||GAS_TYPE.u}</div>`
+    +`<div class="pm">Cadent gas distribution network</div>`
+    +`<table>${rows}</table>`+gmaps(e.latlng.lat,e.latlng.lng)).openOn(map);
 }
-lvNetwork.addTo(map);   // LV on by default (all sub-categories enabled)
+// One viewport-windowed tile layer per tree; identical machinery to the LV cables.
+function gasTileLayer(dir,minzoom){
+  const cache=new Map(); const group=L.layerGroup();
+  let layer=null, token=0;
+  async function tile(x,y){
+    const k=x+'/'+y;
+    if(cache.has(k)){const v=cache.get(k);cache.delete(k);cache.set(k,v);return v;}
+    let fc={features:[]};
+    try{const r=await fetch('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
+    cache.set(k,fc);
+    while(cache.size>GAS_MAXCACHE)cache.delete(cache.keys().next().value);
+    return fc;
+  }
+  async function render(){
+    if(!map.hasLayer(group)||map.getZoom()<minzoom){ if(layer)layer.clearLayers(); return; }
+    const t=++token;
+    const b=map.getBounds().pad(0.2), z=GAS_GRID;
+    const x0=lvLon2x(b.getWest(),z),x1=lvLon2x(b.getEast(),z),
+          y0=lvLat2y(b.getNorth(),z),y1=lvLat2y(b.getSouth(),z);
+    const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(tile(x,y));
+    const fcs=await Promise.all(reqs);
+    if(t!==token) return;                        // a newer render superseded this one
+    const seen=new Set(), feats=[];
+    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
+    if(!layer){
+      layer=L.geoJSON(null,{
+        style:gasStyle,
+        onEachFeature:(f,l)=>l.on('click',e=>gasPopup(e,f.properties))});
+      group.addLayer(layer);
+    }
+    layer.clearLayers();
+    layer.addData({type:'FeatureCollection',features:feats});
+  }
+  group.on('add',()=>{render();updateLvHint();});
+  group.on('remove',()=>{if(layer)layer.clearLayers();updateLvHint();});
+  map.on('moveend',render);
+  return group;
+}
+const gasMains=gasTileLayer('main',GAS_MAIN_MINZOOM);
+const gasSvc=gasTileLayer('svc',GAS_SVC_MINZOOM);
+
+// The LV and gas networks only draw when zoomed in; tell the user so they don't
+// look broken when toggled on from a wide view.
+const lvHint=L.control({position:'bottomleft'});
+let lvHintEl=null;
+function hintText(){
+  const z=map.getZoom(), want=[];
+  if(map.hasLayer(lvNetwork)&&z<14) want.push('LV network');
+  if(map.hasLayer(gasMains)&&z<GAS_MAIN_MINZOOM) want.push('gas network');
+  return want.length?('&#128269; Zoom in to see the '+want.join(' &amp; ')):'';
+}
+lvHint.onAdd=()=>{lvHintEl=L.DomUtil.create('div','lvhint');lvHintEl.innerHTML=hintText();return lvHintEl;};
+function updateLvHint(){
+  const txt=hintText();
+  if(txt && !lvHint._map) lvHint.addTo(map);
+  else if(!txt && lvHint._map) lvHint.remove();
+  if(txt && lvHintEl) lvHintEl.innerHTML=txt;
+}
+// Nothing is added here: every layer starts OFF, so the page opens on a clean
+// basemap. The LV and gas layers fetch from their own 'add' handlers, so while
+// they are off they cost nothing - no tiles, no transformers, no requests.
 
 // ---- Layer control: custom "LayerDeck" (Power group -> HV + LV) -------------
 const FX = {
@@ -639,7 +740,7 @@ const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 // ============================================================================
 const HV_LAB_MINZOOM = 13;        // below this: no labels (clean + fast)
 const HV_LAB_CAP     = 400;       // hard safety cap on simultaneously-mounted labels
-let hvLabelsOn   = false;         // toggle state (also read by the extra_infra merge)
+let hvLabelsOn   = true;          // toggle state, default on (also read by the extra_infra merge)
 let hvLabelLayer = null;          // L.layerGroup of permanent tooltips (in its own pane)
 let hvLabelPane  = null;
 
@@ -663,7 +764,7 @@ function kvText(volts){
 // so runtime-merged stations are covered. Returns [{ll,text,cls}, ...].
 function hvLabelDescriptors(){
   const out = [];
-  const pull = (lyr, isStation) => {
+  const pull = (lyr, isStation, src) => {
     if(!lyr) return;
     lyr.eachLayer(l => {
       const f = l.feature; if(!f) return;
@@ -688,11 +789,11 @@ function hvLabelDescriptors(){
       let ll = (l.getLatLng && l.getLatLng());
       if(!ll && l.getCenter){ try{ ll = l.getCenter(); }catch(e){} }
       if(!ll && l.getBounds){ try{ ll = l.getBounds().getCenter(); }catch(e){} }
-      if(ll) out.push({ ll, text, cls });
+      if(ll) out.push({ ll, text, cls, src });
     });
   };
-  pull(sub['power.hv'], false);
-  pull(sub['power.ps'], true);
+  pull(sub['power.hv'], false, 'hv');
+  pull(sub['power.ps'], true,  'ps');
   return out;
 }
 
@@ -703,11 +804,15 @@ function buildHvLabels(){
   if(!hvLabelLayer) hvLabelLayer = L.layerGroup([], {pane:'hvLabels'});
   if(!map.hasLayer(hvLabelLayer)) hvLabelLayer.addTo(map);
   hvLabelLayer.clearLayers();
-  // labels follow the HV network: hide entirely if HV layer is off or zoomed out
-  if(map.getZoom() < HV_LAB_MINZOOM || !map.hasLayer(sub['power.hv'])) return;
+  // Each label follows its own source layer, so labelling never outlives what it
+  // describes: substation/line labels need power.hv on, station MW labels need
+  // power.ps on. Nothing to draw if both are off, or zoomed out.
+  const hvOn = map.hasLayer(sub['power.hv']), psOn = map.hasLayer(sub['power.ps']);
+  if(map.getZoom() < HV_LAB_MINZOOM || (!hvOn && !psOn)) return;
   const b = map.getBounds().pad(0.15);
   let n = 0;
   for(const it of hvLabelDescriptors()){
+    if(it.src === 'ps' ? !psOn : !hvOn) continue;
     if(!b.contains(it.ll)) continue;
     L.tooltip({permanent:true, direction:'right', offset:[6,0],
                className:it.cls, opacity:1, pane:'hvLabels', interactive:false})
@@ -854,7 +959,7 @@ const LeafLayerDeck = L.Control.extend({
     });
 
     refreshParent();
-    // open groups that start with any child on (all grouped children default ON)
+    // every layer starts off, so all group chips render unlit
     requestAnimationFrame(() => setOpen(kids.some(k => m.hasLayer(k.def.layer))));
   },
 
@@ -872,10 +977,10 @@ const LeafLayerDeck = L.Control.extend({
   _extrasHtml:function(g){
     if (g.key !== 'power') return '';
     return `
-      <button class="fx-cap fx-labtog" data-labtog><span class="fx-cap-sw"></span>HV labels (kV / MW)</button>
-      <div class="fx-rag" data-rag>
+      <button class="fx-cap fx-labtog on" data-labtog><span class="fx-cap-sw"></span>HV labels (kV / MW)</button>
+      <div class="fx-rag cap-on" data-rag>
         <div class="fx-rag-tx"><i style="background:#FFC400;border-color:#3A2E00"></i>Transformer (substation)</div>
-        <button class="fx-cap" data-captog><span class="fx-cap-sw"></span>Colour cables by capacity</button>
+        <button class="fx-cap on" data-captog><span class="fx-cap-sw"></span>Colour cables by capacity</button>
         <div class="fx-rag-legend">
           <div class="fx-rag-bar"></div>
           <div class="fx-rag-rows">
@@ -932,8 +1037,10 @@ const GROUPS = [
       { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
       { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
   { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
-      { key:'gas.pipe', label:'Pipelines',   icon:ICON.pipe, color:FX.gas, layer:sub['gas.pipe'] },
-      { key:'gas.hold', label:'Gas holders', icon:ICON.gas,  color:FX.gas, layer:sub['gas.hold'] } ] },
+      { key:'gas.pipe', label:'Pipelines',     icon:ICON.pipe, color:FX.gas,     layer:sub['gas.pipe'] },
+      { key:'gas.main', label:'Mains',         icon:ICON.pipe, color:GAS_COL.MP, layer:gasMains },
+      { key:'gas.svc',  label:'Service pipes', icon:ICON.pipe, color:GAS_SVC_COL,layer:gasSvc },
+      { key:'gas.hold', label:'Gas holders',   icon:ICON.gas,  color:FX.gas,     layer:sub['gas.hold'] } ] },
   { key:'water', label:'Water', color:FX.water, icon:ICON.water, children:[
       { key:'water.site', label:'Sites',     icon:ICON.water, color:FX.water, layer:sub['water.site'] },
       { key:'water.pipe', label:'Pipelines', icon:ICON.pipe,  color:FX.water, layer:sub['water.pipe'] } ] },

@@ -13,6 +13,16 @@ is an expandable group holding the **HV** and **LV** electricity networks; the
 other utilities and transport toggle individually. Lines are coloured per
 category; **solid = overground, dashed = underground / tunnel.**
 
+**Every layer starts switched off**, so the map opens on a clean basemap and you
+add only what you want. Nothing is fetched for a layer until you enable it — a
+cold load makes no tile requests at all. Tapping a group's row toggles the whole
+group; the chevron expands it for the individual layers.
+
+Two display options in the Power drawer are **on** from the start, so they apply
+the moment you switch a power layer on: **HV labels (kV / MW)** and **Colour
+cables by capacity**. Labels follow their own layer — substation and line labels
+need the HV network on, station "Name 1380 MW" labels need Power stations on.
+
 | Layer | Contents |
 |-------|----------|
 | **Power → HV** | High-voltage network: substations, overhead lines, underground cables and power stations (SP Manweb / OSM) |
@@ -20,36 +30,70 @@ category; **solid = overground, dashed = underground / tunnel.**
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | Gas pipelines + gas holders |
+| **Gas** | Cadent **mains** and **service pipes** (the real low/medium-pressure distribution network), plus OSM gas pipelines and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
-Networks (not OSM). It is **off by default**; transformers appear from zoom 14
-and cables from **zoom 16** (street level) — there is far too much to show
-region-wide. The ~1.47M source cable segments are merged into continuous
-polylines and drawn as real, full-precision vectors for the current viewport, so
-they stay crisp at every zoom. Cables are a single colour by default; toggle
-**"Colour cables by capacity"** to shade them by capacity headroom (**green** =
-spare, **amber** = limited, **red** = at/near capacity, **grey** = not assessed).
+Networks (not OSM). Transformers appear from zoom 14 and cables from **zoom 16**
+(street level) — there is far too much to show region-wide. The ~1.47M source
+cable segments are merged into continuous polylines and drawn as real,
+full-precision vectors for the current viewport, so they stay crisp at every
+zoom. Cables are shaded by capacity headroom (**green** = spare, **amber** =
+limited, **red** = at/near capacity, **grey** = not assessed); switch
+**"Colour cables by capacity"** off to draw them all in one colour instead.
 Transformers are yellow markers. Click a transformer for "LV transformer" + its
 capacity, or a cable for its type, voltage and capacity.
+
+The **gas mains and service pipes** are Cadent's real distribution network (not
+OSM), served from committed tiles the same way as the LV cables. **Mains** appear
+from **zoom 14** and are shaded by pressure tier (medium pressure darker and
+thicker than low pressure); **service pipes** — the last-mile connections into
+individual premises — only appear from **zoom 17**, since they are street-level
+clutter at any wider view. Click a pipe for its pressure tier, material,
+diameter, install year and whether it is above or below ground.
+
+In this region the network merges to ~170k polylines: 157k mains and 13k
+services, 161k low-pressure and 9.5k medium-pressure. Material is mostly
+polyethylene (145k) with the iron legacy still visible — 7.9k cast iron, 4.5k
+spun iron, 4.2k ductile iron, and 162 asbestos. Install dates run 1850–2026
+(median 1991). Note that diameters come in **mixed units** — 134k in millimetres
+and 37k in inches — which Cadent's own catalogue flags; the map keeps the unit
+alongside the value rather than converting, and never merges pipes across
+differing diameter units.
+
+This is Cadent's **GPI Open** dataset, which is the low-pressure (≤75 mbarg) and
+medium-pressure (>75 mbarg, ≤2 barg) network only. Cadent's intermediate- and
+high-pressure data is published separately as a **"Shared"** dataset requiring a
+data sharing agreement, so it is deliberately *not* used here — this map is
+public, and a sharing agreement does not carry a right to republish.
 
 Switchable basemaps: Street (OSM), Satellite, Satellite + labels, Topographic,
 and a clean Carto style.
 
 ## Rebuilding
 
-`index.html` embeds the OSM-derived layer data; the LV network instead reads the
-committed GeoJSON tiles under `tiles/lvgeo/` (cables) and `lv_transformers.geojson`
-(transformers). To regenerate the page:
+`index.html` loads the OSM-derived layer data from `data.json` at runtime; the LV
+and gas networks read committed GeoJSON tiles under `tiles/lvgeo/`,
+`tiles/gasgeo/` and `lv_transformers.geojson` (transformers). Smoke-test the page
+after any edit:
 
 ```bash
-python final_map.py          # reads the *.geojson / *.json inputs, writes index.html
-node test_map.js index.html  # smoke-test: runs the page JS against the real data
+node test_map.js index.html  # runs the page JS against the real committed data
 ```
 
-> `final_map.py` is the canonical page template. If Python isn't available, apply
-> the same template edits directly to `index.html` (the deployed file).
+The test mocks just enough Leaflet and DOM to execute the page, resolves its
+`fetch()`es against the real files on disk, and pretends every layer is on at
+street zoom — so the tile render paths and their style/popup callbacks actually
+run. It fails if the page reports an error or draws nothing. Set `ZOOM=n` to
+check a different band (e.g. `ZOOM=13` should fetch no tiles at all).
+
+> **`final_map.py` is stale.** It still carries the older template that inlined
+> the feature data (`const data=__DATA__`), whereas the deployed `index.html` has
+> since moved to async `fetch('data.json')` + `initData()`. It also needs source
+> inputs that are git-ignored, so it will not run from a fresh clone. **Edit
+> `index.html` directly** — it is the file that ships. Gas-layer changes have been
+> applied to both to stop the two drifting further apart, but the two files are
+> not otherwise interchangeable.
 
 ### LV network tiles
 Built once from SP Energy Networks' public ConnectMore WFS and committed, so the
@@ -67,6 +111,39 @@ polylines per (capacity, cable type, voltage). `build_lv_geojson_tiles.mjs` bins
 them into `tiles/lvgeo/{x}/{y}.json` on a zoom-14 grid; at runtime the map fetches
 only the cells in view and draws them as crisp `L.geoJSON` canvas polylines.
 
+### Cadent gas network tiles
+Same shape as the LV build, from Cadent's open data portal. The licence is open
+(OGL v3.0) but the portal still gates record downloads behind a **free account**,
+so you need an API key (portal → Account → API keys):
+
+```bash
+echo YOUR_KEY > .cadent_key
+```
+
+`.cadent_key` is git-ignored; `$CADENT_API_KEY` and `--key=` also work. The key
+goes in an `Authorization` header, never the query string, and is scrubbed from
+any error output. Then:
+
+```bash
+node fetch_gas.mjs --out=gas_pipes.geojson                      # bbox-gridded download
+node merge_gas.mjs gas_pipes.geojson gas_pipes_merged.geojson   # chain pipes into polylines
+node build_gas_tiles.mjs gas_pipes_merged.geojson tiles/gasgeo  # bin into z14 cells
+```
+
+`fetch_gas.mjs` walks the region as a grid, **counting each cell first** and
+splitting it into quadrants when it exceeds `--max` (default 40k), so a
+server-side cap can never silently truncate the download. `merge_gas.mjs` chains
+pipes into continuous polylines, bucketed on the full attribute set so a merged
+line is always homogeneous — install year is excluded from the bucket key (it is
+often inferred or defaulted in the source and would shatter otherwise continuous
+mains) and the oldest year along a chain wins. `build_gas_tiles.mjs` writes
+**two** trees, `tiles/gasgeo/main/` and `tiles/gasgeo/svc/`, so the mains view
+never pulls the much larger service geometry.
+
+Note that Cadent's North West network covers Merseyside and Cheshire but **not
+North Wales** (that is Wales & West Utilities), so the western part of the
+region legitimately comes back empty.
+
 ### Source data
 - `spen_complete_revert.geojson`, `current_power.geojson` — `power=*` features
 - `merseyrail_rail.json` — `railway=rail` + `electrified=rail` (raw Overpass)
@@ -74,6 +151,8 @@ only the cells in view and draws them as crisp `L.geoJSON` canvas polylines.
 - `infra_probe.json` — treatment works / towers / pumping stations (centroids)
 - `tiles/lvgeo/`, `lv_transformers.geojson` — LV cables + transformers from SP Energy
   Networks ConnectMore (`connectmore-costestimator:lv_cables_map_view`, `lv_transformers_map_view`)
+- `tiles/gasgeo/` — Cadent gas mains + service pipes, from the Cadent open data
+  portal (`gas-pipe-infrastructure-gpi_open`)
 - `extra_infra.geojson` — extra OSM infrastructure (full pipeline routes, tank
   farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
   merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`
@@ -85,10 +164,24 @@ only the cells in view and draws them as crisp `L.geoJSON` canvas polylines.
 - Pipelines are limited to those with a known `substance` tag ("major" lines).
 - OSM coverage is partial; this reflects what is mapped, not a complete asset
   register.
+- The Cadent gas layers are the exception to the point above — they are a real
+  asset register, not crowd-sourced. But they are **positionally indicative
+  only**: Cadent publish them explicitly *not* for digging purposes, and this map
+  rounds coordinates to ~1 m when building tiles. Never dig against them; use
+  [LSBUD](https://lsbud.co.uk/).
+- Cadent gas pipes are drawn **solid, not dashed**, despite being almost entirely
+  buried — the same exception the LV cables make, because a dense street-level
+  layer rendered in dashes is unreadable. Each popup states whether the pipe is
+  above or below ground.
 
 ## Attribution
 - Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors, licensed under [ODbL](https://opendatacommons.org/licenses/odbl/).
+- Gas network data © [Cadent Gas Limited](https://cadentgas.opendatasoft.com/),
+  from their open data portal. Contains public sector information licensed under
+  the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+  **Not for use in digging practices** — for safe digging, consult
+  [LSBUD](https://lsbud.co.uk/).
 - LV network data © [SP Energy Networks](https://www.spenergynetworks.co.uk/),
   via their ConnectMore interactive map. Reproduced here for personal,
   non-commercial reference; subject to SP Energy Networks' terms of use.
