@@ -32,6 +32,7 @@ function tagOf(f) {
   if (p.du !== undefined || (p.t !== undefined && p.p !== undefined)) return 'gas';
   if (p.rag !== undefined) return 'lv';
   if (p.cat !== undefined) return 'osm';
+  if (p.id !== undefined) return 'gas-ag';   // above-ground sites {id} / pipes {id,len}
   return 'other';
 }
 
@@ -74,7 +75,9 @@ function bounds() {
 function drawAll(data, opts, parent) {
   if (!data || !data.features || !opts) return;
   for (const f of data.features) {
-    if (opts.style) opts.style(f);
+    // Leaflet accepts `style` as a function OR a plain object; only the function
+    // form is worth invoking, and calling the object form would throw
+    if (typeof opts.style === 'function') opts.style(f);
     if (opts.pointToLayer && f.geometry && f.geometry.type === 'Point') opts.pointToLayer(f, [0, 0]);
     const child = layer(false);
     child.feature = f;                       // hvLabelDescriptors() reads l.feature

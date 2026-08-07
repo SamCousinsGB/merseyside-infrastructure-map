@@ -30,7 +30,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | Cadent **mains** and **service pipes** (the real low/medium-pressure distribution network), plus OSM gas pipelines and gas holders |
+| **Gas** | Cadent **mains**, **service pipes**, **above-ground sites** and **above-ground pipes**, plus OSM gas pipelines and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
@@ -52,7 +52,32 @@ individual premises — only appear from **zoom 17**, since they are street-leve
 clutter at any wider view. Click a pipe for its pressure tier, material,
 diameter, install year and whether it is above or below ground.
 
-In this region the network merges to ~170k polylines: 157k mains and 13k
+**Above-ground sites** (1,360 in region) and **above-ground pipes** (266) come
+from two further Cadent open datasets. The sites are what Cadent describe as
+"assets that sit above ground … usually assets that reduce the pressure of gas" —
+governors and pressure-reduction installations, the green cabinets and fenced
+compounds you walk past. The pipes are the runs that surface to cross a river,
+bridge or ravine, so they are drawn **solid and heavier** — the one place on this
+map where "solid = overground" is literally true of a gas pipe. Both are small
+enough to ship as whole GeoJSON files rather than tiles, and both lead their
+popup with Street View, because unlike everything else here you can actually go
+and look at them.
+
+Two caveats on the sites, both checked against the API rather than assumed:
+
+- The open tier gives **every** site the identical description `"Above Ground
+  Site"`. It does not say which are governors, which are valve compounds, and so
+  on — so neither does the map. The popup says "typically a pressure-reduction
+  installation", not "this is a governor".
+- The **Shared** twin of that dataset (`agis-above-ground-asset-shared`) has an
+  identical schema and identical record count. It is the same data behind a data
+  sharing agreement, so there is nothing to gain by using it.
+
+The above-ground pipes are **not** duplicates of the `ag_ind=True` pipes in GPI
+Open: sampled locations carry an above-ground pipe here while GPI marks all 46
+pipes at the same spot as buried. The two are complementary.
+
+In this region the mains network merges to ~170k polylines: 157k mains and 13k
 services, 161k low-pressure and 9.5k medium-pressure. Material is mostly
 polyethylene (145k) with the iron legacy still visible — 7.9k cast iron, 4.5k
 spun iron, 4.2k ductile iron, and 162 asbestos. Install dates run 1850–2026
@@ -144,6 +169,17 @@ Note that Cadent's North West network covers Merseyside and Cheshire but **not
 North Wales** (that is Wales & West Utilities), so the western part of the
 region legitimately comes back empty.
 
+The above-ground assets are a separate, much smaller pull — no merge or tiling
+step, just two committed GeoJSON files:
+
+```bash
+node fetch_gas_sites.mjs     # -> gas_ag_sites.geojson + gas_ag_pipes.geojson
+```
+
+It counts each dataset before exporting and **exits non-zero if either export
+comes back short of its own reported count**, so a truncated download can't be
+committed as if it were complete.
+
 ### Source data
 - `spen_complete_revert.geojson`, `current_power.geojson` — `power=*` features
 - `merseyrail_rail.json` — `railway=rail` + `electrified=rail` (raw Overpass)
@@ -153,6 +189,8 @@ region legitimately comes back empty.
   Networks ConnectMore (`connectmore-costestimator:lv_cables_map_view`, `lv_transformers_map_view`)
 - `tiles/gasgeo/` — Cadent gas mains + service pipes, from the Cadent open data
   portal (`gas-pipe-infrastructure-gpi_open`)
+- `gas_ag_sites.geojson`, `gas_ag_pipes.geojson` — Cadent above-ground sites and
+  pipes (`above-ground-infrastructure-assets-open`, `agp-above-ground-pipes-open`)
 - `extra_infra.geojson` — extra OSM infrastructure (full pipeline routes, tank
   farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
   merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`

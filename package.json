@@ -7,6 +7,7 @@
     "merge-lv": "node --max-old-space-size=10240 merge_lv.mjs",
     "build-lv-tiles": "node --max-old-space-size=10240 build_lv_geojson_tiles.mjs",
     "fetch-gas": "node --max-old-space-size=8192 fetch_gas.mjs",
+    "fetch-gas-sites": "node fetch_gas_sites.mjs",
     "merge-gas": "node --max-old-space-size=10240 merge_gas.mjs",
     "build-gas-tiles": "node --max-old-space-size=10240 build_gas_tiles.mjs",
     "test": "node test_map.js index.html"

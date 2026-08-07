@@ -685,6 +685,58 @@ function gasTileLayer(dir,minzoom){
 const gasMains=gasTileLayer('main',GAS_MAIN_MINZOOM);
 const gasSvc=gasTileLayer('svc',GAS_SVC_MINZOOM);
 
+// ---- Cadent above-ground gas assets ------------------------------------------
+// Two more OGL v3.0 datasets, small enough (~1.4k + ~270 in region) to commit
+// whole and draw in one go - no tile pyramid:
+//   sites  gas_ag_sites.geojson - Cadent describe these as "assets that sit above
+//          ground ... usually assets that reduce the pressure of gas", i.e.
+//          governors / pressure-reduction installations.
+//   pipes  gas_ag_pipes.geojson - runs that cross a river, bridge or ravine.
+// The open tier gives EVERY site the identical description "Above Ground Site",
+// so the map deliberately does not claim a type for any individual site - the
+// popup says "typically", not "this is a governor". (The "Shared" twin of the
+// sites dataset has an identical schema and count, so nothing is lost here.)
+// These are the gas assets you can actually see from the street, so the popups
+// lead with the Street View link.
+const GAS_AG_COL='#E8730C';
+// Lazily load a whole-file GeoJSON layer: nothing is fetched until switched on,
+// which keeps a cold load at zero requests like every other layer.
+function lazyGeoJSON(url, opts){
+  const group=L.layerGroup(); let state='idle';
+  group.on('add',()=>{
+    if(state!=='idle') return; state='loading';
+    fetch(url).then(r=>r.ok?r.json():{features:[]})
+      .then(fc=>{ group.addLayer(L.geoJSON(fc,opts)); state='loaded'; })
+      // a missing file already degrades to empty above, so reaching here means a
+      // network or render fault: reset so a later toggle retries, but say so
+      .catch(e=>{ state='idle'; console.error('Failed to load '+url, e); });
+  });
+  return group;
+}
+const gasAgSites=lazyGeoJSON('gas_ag_sites.geojson',{
+  pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:GAS_AG_COL,fillOpacity:.95}),
+  onEachFeature:(f,l)=>l.on('click',e=>{
+    const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+    L.popup({className:'tt'}).setLatLng(ll).setContent(
+      `<div class="pt">Above-ground gas site</div>`
+      +`<div class="pm">Cadent &middot; typically a pressure-reduction installation</div>`
+      +`<table><tr><td class="k">ref</td><td>${f.properties.id||'-'}</td></tr></table>`
+      +gmaps(ll.lat,ll.lng)).openOn(map);})
+});
+const gasAgPipes=lazyGeoJSON('gas_ag_pipes.geojson',{
+  // solid and heavier than the buried mains: these genuinely are overground,
+  // which is exactly what the map's solid/dashed convention means
+  style:{color:GAS_AG_COL,weight:3.5,opacity:.95},
+  onEachFeature:(f,l)=>l.on('click',e=>{
+    const p=f.properties, ll=e.latlng||map.getCenter();
+    L.popup({className:'tt'}).setLatLng(ll).setContent(
+      `<div class="pt">Above-ground gas pipe</div>`
+      +`<div class="pm">Cadent &middot; crossing a river, bridge or ravine</div>`
+      +`<table><tr><td class="k">length</td><td>${p.len!=null?(p.len+'&nbsp;m'):'-'}</td></tr>`
+      +`<tr><td class="k">ref</td><td>${p.id||'-'}</td></tr></table>`
+      +gmaps(ll.lat,ll.lng)).openOn(map);})
+});
+
 // The LV and gas networks only draw when zoomed in; tell the user so they don't
 // look broken when toggled on from a wide view.
 const lvHint=L.control({position:'bottomleft'});
@@ -1037,10 +1089,12 @@ const GROUPS = [
       { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
       { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
   { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
-      { key:'gas.pipe', label:'Pipelines',     icon:ICON.pipe, color:FX.gas,     layer:sub['gas.pipe'] },
-      { key:'gas.main', label:'Mains',         icon:ICON.pipe, color:GAS_COL.MP, layer:gasMains },
-      { key:'gas.svc',  label:'Service pipes', icon:ICON.pipe, color:GAS_SVC_COL,layer:gasSvc },
-      { key:'gas.hold', label:'Gas holders',   icon:ICON.gas,  color:FX.gas,     layer:sub['gas.hold'] } ] },
+      { key:'gas.pipe',   label:'Pipelines',          icon:ICON.pipe,    color:FX.gas,      layer:sub['gas.pipe'] },
+      { key:'gas.main',   label:'Mains',              icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasMains },
+      { key:'gas.svc',    label:'Service pipes',      icon:ICON.pipe,    color:GAS_SVC_COL, layer:gasSvc },
+      { key:'gas.agsite', label:'Above-ground sites', icon:ICON.station, color:GAS_AG_COL,  layer:gasAgSites },
+      { key:'gas.agpipe', label:'Above-ground pipes', icon:ICON.pipe,    color:GAS_AG_COL,  layer:gasAgPipes },
+      { key:'gas.hold',   label:'Gas holders',        icon:ICON.gas,     color:FX.gas,      layer:sub['gas.hold'] } ] },
   { key:'water', label:'Water', color:FX.water, icon:ICON.water, children:[
       { key:'water.site', label:'Sites',     icon:ICON.water, color:FX.water, layer:sub['water.site'] },
       { key:'water.pipe', label:'Pipelines', icon:ICON.pipe,  color:FX.water, layer:sub['water.pipe'] } ] },
