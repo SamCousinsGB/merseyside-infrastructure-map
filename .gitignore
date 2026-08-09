@@ -14,6 +14,14 @@ gas_pipes_merged.geojson
 # Cadent open-data portal API key. The licence is open but the portal still
 # gates downloads behind a free account, so this is a credential - never commit.
 .cadent_key
+
+# Local-only map overlays. The whole local/ directory is private: it is where
+# data you may view but not republish (e.g. HP asset data) can be dropped so the
+# map renders it on your machine, WITHOUT any of it reaching this public repo.
+# Everything under local/ is ignored except the committed docs/example below.
+local/*
+!local/README.md
+!local/manifest.example.json
 # Raw Overpass dumps for the extra-infrastructure build (extra_infra.geojson IS committed)
 osm_pipelines.json
 osm_industrial.json

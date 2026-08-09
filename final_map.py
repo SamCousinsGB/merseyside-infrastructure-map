@@ -777,6 +777,43 @@ const gasTrans=lazyGeoJSON('gas_transmission.geojson',{
       +gmaps(ll.lat,ll.lng)).openOn(map);})
 });
 
+// ---- LOCAL-ONLY overlays (never published) -----------------------------------
+// Optional private layers driven by local/manifest.json. The whole local/ dir is
+// git-ignored, so these exist only on a local checkout and NEVER on the public
+// deploy: there the manifest 404s and no local layer is added (not even a toggle).
+// The safe place to view data you may see but not republish. See local/README.md.
+async function loadLocalLayers(){
+  let man;
+  try{
+    const r = await fetch('local/manifest.json', {cache:'no-store'});
+    if(!r.ok) return [];
+    man = await r.json();
+  }catch(e){ return []; }
+  const out = [];
+  for(const spec of (man.layers||[])){
+    if(!spec || !spec.file) continue;
+    const color  = spec.color || GAS_TRANS_COL;
+    const weight = spec.weight || 3;
+    const dash   = spec.dash ? '8 5' : null;
+    const layer = lazyGeoJSON('local/'+spec.file, {
+      style: f => ({color, weight, opacity:.95,
+                    dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)}),
+      pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
+      onEachFeature: (f,l)=>l.on('click',e=>{
+        const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+        const rows=Object.entries(f.properties||{}).slice(0,14)
+          .map(([k,v])=>`<tr><td class="k">${k}</td><td>${String(v)}</td></tr>`).join('');
+        L.popup({className:'tt'}).setLatLng(ll).setContent(
+          `<div class="pt">${spec.label||'Local layer'}</div>`
+          +`<div class="pm">Local only &middot; not published</div>`
+          +`<table>${rows}</table>`+gmaps(ll.lat,ll.lng)).openOn(map);})
+    });
+    out.push({ group: spec.group||'gas', key:'local.'+(spec.id||spec.file),
+               label:(spec.label||spec.file)+' · local', icon:ICON.pipe, color, layer });
+  }
+  return out;
+}
+
 // The LV and gas networks only draw when zoomed in; tell the user so they don't
 // look broken when toggled on from a wide view.
 const lvHint=L.control({position:'bottomleft'});
@@ -1168,16 +1205,23 @@ const GROUPS = [
       { key:'sewage.pipe', label:'Pipelines', icon:ICON.pipe,   color:FX.sewage, layer:sub['sewage.pipe'] } ] },
 ].map(g => ({...g, children: g.children.filter(c => c.layer)}));   // drop any child whose layer is missing
 
-new LeafLayerDeck({
-  map, bases, baseDefault:'Street (OSM)',
-  groups: GROUPS,
-  leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
-  lvNetwork,
-  gasMains,
-  onCapacity: setLvCapacity,
-  onHvLabels: setHvLabels,
-  onPressure: setGasPressure,
-}).addTo(map);
+// fold any local-only overlays into their group, then mount the deck
+loadLocalLayers().then(localLayers => {
+  for(const ll of localLayers){
+    const g = GROUPS.find(x => x.key === ll.group) || GROUPS.find(x => x.key === 'gas');
+    if(g) g.children.push({ key:ll.key, label:ll.label, icon:ll.icon, color:ll.color, layer:ll.layer });
+  }
+  new LeafLayerDeck({
+    map, bases, baseDefault:'Street (OSM)',
+    groups: GROUPS,
+    leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
+    lvNetwork,
+    gasMains,
+    onCapacity: setLvCapacity,
+    onHvLabels: setHvLabels,
+    onPressure: setGasPressure,
+  }).addTo(map);
+});
 
 
 const title=L.control({position:'topleft'});

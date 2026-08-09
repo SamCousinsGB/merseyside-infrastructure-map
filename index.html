@@ -571,6 +571,47 @@ const gasTrans=lazyGeoJSON('gas_transmission.geojson',{
       +gmaps(ll.lat,ll.lng)).openOn(map);})
 });
 
+// ---- LOCAL-ONLY overlays (never published) -----------------------------------
+// Optional private layers driven by local/manifest.json. The entire local/
+// directory is git-ignored, so these exist only on a local checkout and NEVER on
+// the public GitHub Pages deploy: on the deploy the manifest 404s and no local
+// layer is added, so there is not even an empty toggle. This is the safe place
+// to view data you are licensed to see but not to republish (e.g. HP asset data
+// from the MAPS Viewer): it lives on your machine, drawn by the map, and cannot
+// leak into git. Populating local/ is the user's responsibility; nothing about
+// its contents is committed. See local/README.md for the manifest format.
+async function loadLocalLayers(){
+  let man;
+  try{
+    const r = await fetch('local/manifest.json', {cache:'no-store'});
+    if(!r.ok) return [];                       // the normal case on the public deploy
+    man = await r.json();
+  }catch(e){ return []; }                      // absent / malformed -> silently none
+  const out = [];
+  for(const spec of (man.layers||[])){
+    if(!spec || !spec.file) continue;
+    const color  = spec.color || GAS_TRANS_COL;
+    const weight = spec.weight || 3;
+    const dash   = spec.dash ? '8 5' : null;
+    const layer = lazyGeoJSON('local/'+spec.file, {
+      style: f => ({color, weight, opacity:.95,
+                    dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)}),
+      pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
+      onEachFeature: (f,l)=>l.on('click',e=>{
+        const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+        const rows=Object.entries(f.properties||{}).slice(0,14)
+          .map(([k,v])=>`<tr><td class="k">${k}</td><td>${String(v)}</td></tr>`).join('');
+        L.popup({className:'tt'}).setLatLng(ll).setContent(
+          `<div class="pt">${spec.label||'Local layer'}</div>`
+          +`<div class="pm">Local only &middot; not published</div>`
+          +`<table>${rows}</table>`+gmaps(ll.lat,ll.lng)).openOn(map);})
+    });
+    out.push({ group: spec.group||'gas', key:'local.'+(spec.id||spec.file),
+               label:(spec.label||spec.file)+' · local', icon:ICON.pipe, color, layer });
+  }
+  return out;
+}
+
 // one debounced dispatcher for ALL moveend work: collapses wheel-zoom / inertial-pan
 // bursts into a single rebuild (each render's token guard drops any straggler).
 let _mvT; function onMoveEnd(){ clearTimeout(_mvT); _mvT=setTimeout(()=>{ syncLv(); syncGas(); if(hvLabelsOn) buildHvLabels(); }, 150); }
@@ -981,8 +1022,11 @@ const LeafLayerDeck = L.Control.extend({
 //  fetched. Builds the sub-layers in a SINGLE pass over the features, adds the
 //  the sub-layers (all off), merges extra_infra, then configures + mounts the control.
 // ============================================================================
-function initData(fc){
+async function initData(fc){
   data = fc;
+  // load any local-only overlays first, so they can be folded into the deck
+  // before it mounts (absent on the public deploy -> empty array -> no change)
+  const localLayers = await loadLocalLayers();
 
   // bbox-midpoint of any geometry, without allocating a throwaway L.geoJSON layer
   // (identical result to L.geoJSON(f).getBounds().getCenter()).
@@ -1057,6 +1101,13 @@ const GROUPS = [
       { key:'sewage.site', label:'Sites',     icon:ICON.sewage, color:FX.sewage, layer:sub['sewage.site'] },
       { key:'sewage.pipe', label:'Pipelines', icon:ICON.pipe,   color:FX.sewage, layer:sub['sewage.pipe'] } ] },
 ].map(g => ({...g, children: g.children.filter(c => c.layer)}));   // drop any child whose layer is missing
+
+// Fold local-only layers into their target group (default gas). Only ever
+// non-empty on a local checkout; the public deploy has no manifest.
+for(const ll of localLayers){
+  const g = GROUPS.find(x => x.key === ll.group) || GROUPS.find(x => x.key === 'gas');
+  if(g) g.children.push({ key:ll.key, label:ll.label, icon:ll.icon, color:ll.color, layer:ll.layer });
+}
 
 new LeafLayerDeck({
   map, bases, baseDefault:'Street (OSM)',

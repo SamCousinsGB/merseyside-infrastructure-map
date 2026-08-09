@@ -1,0 +1,22 @@
+{
+  "_comment": "LOCAL-ONLY overlays. Copy this file to local/manifest.json and edit. Everything in local/ is git-ignored (except this example and README.md), so nothing here is ever published to GitHub Pages. Each layer's `file` is resolved relative to local/. Serve the map locally (python -m http.server) and the layers appear under their group; the public deploy has no manifest, so they simply never exist there.",
+  "layers": [
+    {
+      "id": "hp-network",
+      "label": "HP network",
+      "file": "hp_network.geojson",
+      "group": "gas",
+      "color": "#5A1A1A",
+      "weight": 3,
+      "dash": true
+    },
+    {
+      "id": "hp-stations",
+      "label": "HP stations",
+      "file": "hp_stations.geojson",
+      "group": "gas",
+      "color": "#3A0A0A",
+      "weight": 2
+    }
+  ]
+}

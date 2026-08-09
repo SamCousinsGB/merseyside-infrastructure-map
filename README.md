@@ -218,6 +218,24 @@ committed as if it were complete.
   farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
   merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`
 
+## Private, local-only overlays
+
+The map can show extra layers that exist **only on your machine** and are never
+published. Everything under `local/` is git-ignored (except its README and an
+example manifest), so it cannot reach the public GitHub Pages deploy — there the
+manifest simply 404s and no local layer is added, not even a toggle.
+
+This is the place for data you are licensed to *view* but not to *republish*
+(for example intermediate/high-pressure asset data). Copy
+`local/manifest.example.json` to `local/manifest.json`, drop your WGS84 GeoJSON
+files in `local/`, list them, and serve the map locally. See
+[`local/README.md`](local/README.md) for the manifest format.
+
+The map only renders files you place there — it does not fetch, decrypt or
+convert anything. Producing the GeoJSON from whatever source you are entitled to
+use is up to you and stays on your machine; if a dataset's licence forbids
+publication, keeping it in `local/` guarantees it never is.
+
 ## Notes & caveats
 - **Sewers are not mapped** — they are essentially absent from OpenStreetMap
   (underground, unsurveyable). Sewage appears only via treatment works and
