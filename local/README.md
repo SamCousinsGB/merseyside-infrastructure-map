@@ -9,7 +9,22 @@ Nothing here is committed, so nothing here can leak into the public GitHub Pages
 deploy. On the deploy there is no `local/manifest.json`, so the map adds no local
 layers at all — not even an empty toggle.
 
-## Use
+## One-click (recommended)
+
+1. Put your GeoJSON export(s) — HP/IP/MP/LP, mixed together is fine — in
+   `local/source/`.
+2. Double-click **`setup.bat`** in the repo root.
+
+It classifies every feature by pressure tier, writes a colour-coded layer per
+tier (HP darkest → LP lightest, unknown grey), then serves the map locally and
+opens it. The layers appear under **Gas**. Re-run any time your source changes.
+
+`setup.bat` → `build_gas_local.mjs` only *reads* what you place in `local/source/`
+and *writes* into `local/`. It never downloads, decrypts or commits anything.
+Pressure is read from any property named like `pressure` / `tier` / `barg`,
+accepting codes (`HP`/`IP`/`MP`/`LP`) or a numeric barg value.
+
+## Manual / custom manifest
 
 1. Copy the example manifest:
 
