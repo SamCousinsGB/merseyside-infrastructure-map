@@ -700,12 +700,27 @@ function main() {
     return;
   }
 
+  // WGS84 envelope of everything actually extracted. The map uses this to hide
+  // the wider-but-coarser Cadent open-data mains wherever MAPS has better data,
+  // so the two never draw the same pipe twice.
+  let lo0 = 180, la0 = 90, lo1 = -180, la1 = -90;
+  const grow = (co) => {
+    if (typeof co[0] === "number") {
+      if (co[0] < lo0) lo0 = co[0];
+      if (co[0] > lo1) lo1 = co[0];
+      if (co[1] < la0) la0 = co[1];
+      if (co[1] > la1) la1 = co[1];
+    } else for (const x of co) grow(x);
+  };
+  for (const tier of ORDER) for (const f of byTier[tier] || []) if (f.geometry) grow(f.geometry.coordinates);
+
   fs.writeFileSync(
     path.join(OUT_DIR, "meta.json"),
     JSON.stringify(
       {
         source: "MAPS Viewer (NG,GDFO)",
         extent27700: bbox,
+        bounds: lo1 < lo0 ? null : [lo0, la0, lo1, la1],
         mains: pipes,
         plant: plantN,
         layers,

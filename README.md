@@ -30,7 +30,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | High-pressure **transmission (NTS/LTS)**, Cadent **mains**, **service pipes**, **above-ground sites** and **above-ground pipes**, plus OSM gas pipelines and gas holders |
+| **Gas** | **Mains** (National Grid MAPS survey, falling back to Cadent open data outside its extent), **service pipes**, **valves & plant**, **transmission (NTS/LTS)**, **above-ground sites**, **above-ground pipes** and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
@@ -44,18 +44,28 @@ limited, **red** = at/near capacity, **grey** = not assessed); switch
 Transformers are yellow markers. Click a transformer for "LV transformer" + its
 capacity, or a cable for its type, voltage and capacity.
 
-The **gas mains and service pipes** are Cadent's real distribution network (not
-OSM), served from committed tiles the same way as the LV cables. **Mains** appear
-from **zoom 14**; **service pipes** — the last-mile connections into individual
-premises — only appear from **zoom 17**, since they are street-level clutter at
-any wider view.
+**Mains** is one toggle over two sources. Where the National Grid MAPS survey
+reaches (Merseyside) it supplies the pipes — surveyed geometry with real
+diameter, material and a full pressure split. Outside that envelope the layer
+falls back to Cadent's open-data tiles, which cover a wider region (Cheshire,
+Warrington, north Wales). The two never draw the same pipe: the open-data tiles
+are clipped to outside the MAPS envelope, which the map reads from
+`tiles/mapsgeo/meta.json`. **Service pipes** — the last-mile connections into
+individual premises — stay on Cadent's data and only appear from **zoom 17**,
+since they are street-level clutter at any wider view.
 
-Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; dark red =
-medium, ≤2 barg), with a legend in the Gas drawer — the same treatment the LV
-cables get for capacity. Switch **"Colour pipes by pressure"** off to fall back
-to one colour per pipe type. Colour encodes pressure, line weight encodes type,
-so the two read independently. Click a pipe for its pressure tier, material,
-diameter, install year and whether it is above or below ground.
+Detail arrives with zoom rather than with extra toggles: the high-pressure spine
+draws from **z11**, intermediate from **z12**, medium from **z13** and the dense
+low-pressure network from **z15**. **Valves & plant** (governors, syphons, valves
+— 249k of them) is a separate toggle, since it is visually heavy.
+
+Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
+near-black for the national transmission network), with a legend in the Gas
+drawer — the same treatment the LV cables get for capacity. Switch **"Colour
+pipes by pressure"** off to fall back to one colour per pipe type. Colour encodes
+pressure, line weight encodes type, so the two read independently. Click a pipe
+for its pressure tier, material, diameter, what it was inserted into, and survey
+date or install year depending on the source.
 
 **Above-ground sites** (1,360 in region) and **above-ground pipes** (266) come
 from two further Cadent open datasets. The sites are what Cadent describe as

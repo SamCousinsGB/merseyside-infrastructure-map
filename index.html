@@ -199,8 +199,11 @@ bases['Street (OSM)'].addTo(map);
 // "From Cadent Gas Open Data"; SP Energy Networks and OpenStreetMap (ODbL, for
 // the OSM pipelines + the transmission layer) are credited alongside. Always
 // shown, since these layers are the point of the map even when toggled off.
+// National Grid comes first because the Mains layer now draws the MAPS survey
+// wherever it reaches and falls back to the Cadent tiles only outside it - the
+// credit has to name whichever source you are actually looking at.
 map.attributionControl.addAttribution(
-  'Gas: From Cadent Gas Open Data (OGL v3.0) &middot; ' +
+  'Gas: National Grid MAPS &middot; From Cadent Gas Open Data (OGL v3.0) &middot; ' +
   'LV: &copy; SP Energy Networks &middot; ' +
   'Infrastructure: &copy; OpenStreetMap contributors (ODbL)'
 );
@@ -469,7 +472,22 @@ function gasPopup(e,p){
 }
 // One viewport-windowed tile layer per tree; identical machinery to the LV cables.
 const gasRenders=[];
-function gasTileLayer(dir,minzoom){
+// Where the MAPS extract has data it is the better source - surveyed, with real
+// diameter/material and a full pressure split - so the open-data mains are
+// clipped OUT of its envelope rather than drawn underneath it. That keeps a
+// single "Mains" toggle honest: authoritative geometry inside, wider open-data
+// coverage (Cheshire, Warrington, north Wales) outside, and never both for the
+// same pipe. mapsBounds is filled in from tiles/mapsgeo/meta.json; until it
+// loads, or with no MAPS extract at all, nothing is suppressed.
+let mapsBounds=null;
+function outsideMaps(f){
+  if(!mapsBounds) return true;
+  const co=f.geometry&&f.geometry.coordinates; if(!co) return true;
+  const p=Array.isArray(co[0])?co[Math.floor(co.length/2)]:co;   // midpoint is enough
+  if(!p||typeof p[0]!=='number') return true;
+  return p[0]<mapsBounds[0]||p[0]>mapsBounds[2]||p[1]<mapsBounds[1]||p[1]>mapsBounds[3];
+}
+function gasTileLayer(dir,minzoom,clip){
   const cache=new Map(); const group=L.layerGroup();
   let layer=null, token=0;
   async function tile(x,y){
@@ -491,7 +509,8 @@ function gasTileLayer(dir,minzoom){
     const fcs=await Promise.all(reqs);
     if(t!==token) return;                        // a newer render superseded this one
     const seen=new Set(), feats=[];
-    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
+    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id);
+      if(clip&&!clip(f))continue; feats.push(f); }
     if(!layer){
       layer=L.geoJSON(null,{
         style:gasStyle,
@@ -507,7 +526,7 @@ function gasTileLayer(dir,minzoom){
   group.on('remove',()=>{if(layer)layer.clearLayers();updateLvHint();});
   return group;
 }
-const gasMains=gasTileLayer('main',GAS_MAIN_MINZOOM);
+const gasMains=gasTileLayer('main',GAS_MAIN_MINZOOM,outsideMaps);
 const gasSvc=gasTileLayer('svc',GAS_SVC_MINZOOM);
 function syncGas(){ for(const r of gasRenders) r(); }
 
@@ -632,19 +651,23 @@ const localTiers=new Set();  // pressure tiers an overlay supplies; drives the l
 // `base` is the directory the manifest's paths are relative to, so the same
 // renderer serves the committed MAPS tiers (tiles/mapsgeo/) and any private
 // overlay (local/) without either knowing about the other.
-function localTileLayer(spec,style,base,note){
+// Keyed by URL and shared by every tiled layer, so the mains and plant views of
+// the same tier cost one fetch between them rather than one each.
+const tileCache=new Map(); const TILE_MAXCACHE=260;
+async function fetchTileJSON(url){
+  if(tileCache.has(url)){const v=tileCache.get(url);tileCache.delete(url);tileCache.set(url,v);return v;}
+  let fc={features:[]};
+  try{const r=await fetch(url);if(r.ok)fc=await r.json();}catch(e){}
+  tileCache.set(url,fc);
+  while(tileCache.size>TILE_MAXCACHE)tileCache.delete(tileCache.keys().next().value);
+  return fc;
+}
+function localTileLayer(spec,style,base,o){
+  const {note=null,filter=null,gated=true}=o||{};
   const group=L.layerGroup();
-  const grid=spec.grid||14, minz=spec.minzoom||14, cache=new Map(), MAXC=140;
+  const grid=spec.grid||14, minz=spec.minzoom||14;
   let gj=null, sig=null, token=0;
-  async function tile(x,y){
-    const k=x+'/'+y;
-    if(cache.has(k)){const v=cache.get(k);cache.delete(k);cache.set(k,v);return v;}
-    let fc={features:[]};
-    try{const r=await fetch(base+spec.tiles+'/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
-    cache.set(k,fc);
-    while(cache.size>MAXC)cache.delete(cache.keys().next().value);
-    return fc;
-  }
+  const tile=(x,y)=>fetchTileJSON(base+spec.tiles+'/'+x+'/'+y+'.json');
   async function render(){
     if(!map.hasLayer(group)||map.getZoom()<minz){ if(gj)gj.clearLayers(); sig=null; return; }
     const t=++token, b=map.getBounds().pad(0.2);
@@ -659,7 +682,8 @@ function localTileLayer(spec,style,base,note){
     const fcs=await Promise.all(reqs);
     if(t!==token) return;                      // a newer render superseded this one
     const seen=new Set(), feats=[];
-    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
+    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id);
+      if(filter&&!filter(f))continue; feats.push(f); }
     if(!gj){
       gj=L.geoJSON(null,{style,
         pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:3,color:'#fff',weight:1,fillColor:style(f).color,fillOpacity:.95}),
@@ -670,7 +694,10 @@ function localTileLayer(spec,style,base,note){
     gj.addData({type:'FeatureCollection',features:feats});
   }
   localRenders.push(render);
-  localGated.push({layer:group,minzoom:minz,label:spec.label||'gas layer'});
+  // MAPS tiers opt out of the hint: they sit inside one toggle at staggered
+  // zooms on purpose (HP spine wide, LP only close in), so "zoom in to see the
+  // LP" would be nagging about intended behaviour, not reporting a fault.
+  if(gated) localGated.push({layer:group,minzoom:minz,label:spec.label||'gas layer'});
   group.on('add',()=>{render();updateLvHint();});
   group.on('remove',()=>{if(gj)gj.clearLayers();sig=null;updateLvHint();});
   return group;
@@ -684,41 +711,70 @@ function syncLocal(){ for(const r of localRenders) r(); }
 //                             checkout (see the note above loadLocalLayers)
 // Both describe a layer the same way, so a tier can move between them without a
 // code change here.
+async function fetchManifest(url){
+  try{
+    const r = await fetch(url, {cache:'no-store'});
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){ return null; }                    // absent / malformed -> silently none
+}
+// Build one layer from a manifest entry. `o` may carry {note, filter, gated}.
+function tierLayer(spec, base, o){
+  const color  = spec.color || GAS_TRANS_COL;
+  const weight = spec.weight || 3;
+  const dash   = spec.dash ? '8 5' : null;
+  const style  = f => ({color, weight, opacity:.95,
+                        dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)});
+  return spec.tiles
+    ? localTileLayer(spec, style, base, o)
+    : lazyGeoJSON(base+spec.file, {
+        style,
+        filter: (o&&o.filter) || undefined,
+        pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:4,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
+        onEachFeature: (f,l)=>l.on('click',e=>
+          localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),(o&&o.note)||null))
+      });
+}
+const isPlantFeature = f => ((f.properties||{}).kind === 'plant');
+
+// The committed MAPS extract, surfaced as TWO toggles rather than one per
+// pressure tier. Pressure is carried by colour (and the legend), not by the
+// layer list - five near-identical "…barg" switches was the clutter, not the
+// data. Each tier keeps its own zoom threshold inside the group, so turning
+// "Mains" on gives the HP spine when zoomed out and fills in to LP as you come
+// down, which is how a utility map should behave.
+async function buildMapsGas(){
+  const man = await fetchManifest('tiles/mapsgeo/meta.json');
+  const specs = (man&&man.layers||[]).filter(s => s && (s.file||s.tiles));
+  if(!specs.length) return null;
+  if(Array.isArray(man.bounds) && man.bounds.length===4) mapsBounds = man.bounds;
+  const mains=[], plant=[];
+  for(const spec of specs){
+    if(spec.tier) localTiers.add(String(spec.tier).toUpperCase());
+    mains.push(tierLayer(spec,'tiles/mapsgeo/',{filter:f=>!isPlantFeature(f), gated:false}));
+    plant.push(tierLayer(spec,'tiles/mapsgeo/',{filter:isPlantFeature,       gated:false}));
+  }
+  return { mains:L.layerGroup(mains), plant:L.layerGroup(plant) };
+}
+
 async function loadTierLayers(base, manifestUrl, opts){
   const {suffix='', note=null, keyPrefix=''} = opts||{};
-  let man;
-  try{
-    const r = await fetch(manifestUrl, {cache:'no-store'});
-    if(!r.ok) return [];
-    man = await r.json();
-  }catch(e){ return []; }                      // absent / malformed -> silently none
+  const man = await fetchManifest(manifestUrl);
+  if(!man) return [];
   const out = [];
   for(const spec of (man.layers||[])){
     if(!spec || (!spec.file && !spec.tiles)) continue;
     const t = spec.tier || (/^(?:gas|maps)-([a-z]+)$/.exec(spec.id||'')||[])[1];
     if(t) localTiers.add(String(t).toUpperCase());
-    const color  = spec.color || GAS_TRANS_COL;
-    const weight = spec.weight || 3;
-    const dash   = spec.dash ? '8 5' : null;
-    const style  = f => ({color, weight, opacity:.95,
-                          dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)});
-    const layer = spec.tiles
-      ? localTileLayer(spec, style, base, note)
-      : lazyGeoJSON(base+spec.file, {
-          style,
-          pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:4,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
-          onEachFeature: (f,l)=>l.on('click',e=>
-            localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),note))
-        });
+    const color = spec.color || GAS_TRANS_COL;
+    const layer = tierLayer(spec, base, {note});
     out.push({ group: spec.group||'gas', key:keyPrefix+(spec.id||spec.file||spec.tiles),
                label:(spec.label||spec.file||spec.tiles)+suffix, icon:ICON.pipe, color, layer });
   }
   return out;
 }
-// The MAPS Viewer extract: committed under tiles/mapsgeo/, rebuilt by
-// build_maps_mvf.mjs. Pressure tier, diameter, material and plant all come
-// straight from the source tiles.
-const loadMapsLayers  = () => loadTierLayers('tiles/mapsgeo/','tiles/mapsgeo/meta.json',{keyPrefix:'maps.'});
+// A private overlay still gets one toggle per manifest entry - it is the user's
+// own data and there is no way to know how they want it grouped.
 const loadLocalLayers = () => loadTierLayers('local/','local/manifest.json',
                                 {suffix:' · local', note:'local only, not published', keyPrefix:'local.'});
 
@@ -1142,10 +1198,11 @@ const LeafLayerDeck = L.Control.extend({
 // ============================================================================
 async function initData(fc){
   data = fc;
-  // load the committed MAPS pressure tiers plus any private overlay first, so
-  // both can be folded into the deck before it mounts. Either fetch that 404s
-  // degrades to an empty array and simply contributes no layers.
-  const localLayers = [...await loadMapsLayers(), ...await loadLocalLayers()];
+  // load the committed MAPS extract and any private overlay before the deck
+  // mounts. Either fetch that 404s degrades to null / an empty array and simply
+  // contributes no layers.
+  const mapsGas = await buildMapsGas();
+  const localLayers = await loadLocalLayers();
 
   // bbox-midpoint of any geometry, without allocating a throwaway L.geoJSON layer
   // (identical result to L.geoJSON(f).getBounds().getCenter()).
@@ -1197,6 +1254,18 @@ async function initData(fc){
     if(hvLabelsOn) buildHvLabels();               // power stations arrive here
   }).catch(()=>{});
 
+// Two composite toggles, so the drawer lists assets rather than data sources.
+//   Mains        - the MAPS extract where it reaches, plus the wider open-data
+//                  tiles clipped to outside it (see outsideMaps), so the better
+//                  survey wins and the coverage gap is still filled.
+//   Transmission - the two OSM pipeline pulls, which were separate fetches
+//                  describing the same kind of asset. 45 of the 54 transmission
+//                  ways sit outside the MAPS envelope, so this is real reach,
+//                  not a duplicate of Mains.
+const grp = (...ls) => { const a = ls.filter(Boolean); return a.length ? L.layerGroup(a) : null; };
+const gasNetwork      = grp(mapsGas && mapsGas.mains, gasMains);
+const gasTransmission = grp(gasTrans, sub['gas.pipe']);
+
 const GROUPS = [
   { key:'power', label:'Power', color:FX.hv, icon:ICON.hv, children:[
       { key:'power.hv', label:'HV network',     icon:ICON.hv,      color:FX.hv,     layer:sub['power.hv'] },
@@ -1206,10 +1275,10 @@ const GROUPS = [
       { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
       { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
   { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
-      { key:'gas.trans',  label:'Transmission (HP)',  icon:ICON.pipe,    color:GAS_TRANS_COL, layer:gasTrans },
-      { key:'gas.pipe',   label:'Pipelines',          icon:ICON.pipe,    color:FX.gas,      layer:sub['gas.pipe'] },
-      { key:'gas.main',   label:'Mains',              icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasMains },
+      { key:'gas.main',   label:'Mains',              icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasNetwork },
       { key:'gas.svc',    label:'Service pipes',      icon:ICON.pipe,    color:GAS_SVC_COL, layer:gasSvc },
+      { key:'gas.plant',  label:'Valves &amp; plant', icon:ICON.station, color:GAS_COL.IP,  layer:mapsGas&&mapsGas.plant },
+      { key:'gas.trans',  label:'Transmission',       icon:ICON.pipe,    color:GAS_TRANS_COL, layer:gasTransmission },
       { key:'gas.agsite', label:'Above-ground sites', icon:ICON.station, color:GAS_AG_COL,  layer:gasAgSites },
       { key:'gas.agpipe', label:'Above-ground pipes', icon:ICON.pipe,    color:GAS_AG_COL,  layer:gasAgPipes },
       { key:'gas.hold',   label:'Gas holders',        icon:ICON.gas,     color:FX.gas,      layer:sub['gas.hold'] } ] },
@@ -1233,7 +1302,7 @@ new LeafLayerDeck({
   groups: GROUPS,
   leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
   lvNetwork,
-  gasMains,
+  gasMains: gasNetwork,      // gates the pressure legend on the Mains toggle
   onCapacity: setLvCapacity,
   onHvLabels: setHvLabels,
   onPressure: setGasPressure,
