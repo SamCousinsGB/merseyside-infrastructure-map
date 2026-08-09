@@ -31,17 +31,25 @@ export function bboxOf(geom) {
   return c < a ? null : [a, b, c, d];
 }
 
+// A real pipe or plant symbol spans a handful of cells at most. Anything
+// claiming hundreds is a parse failure upstream, not a very long pipe - and
+// because each feature is written into EVERY cell its bbox covers, one such
+// feature quietly multiplies into millions of files. Cap it, drop it, and say
+// so, rather than letting a bad tile take the disk with it.
+const MAX_CELLS_PER_FEATURE = 256;
+
 /** Write `feats` into `dir` as {x}/{y}.json on a zoom-`grid` tile grid. */
 export function writeTiles(feats, dir, grid) {
   fs.rmSync(dir, { recursive: true, force: true });
   const cells = new Map();
-  let id = 0;
+  let id = 0, oversized = 0;
   for (const f of feats) {
     const bb = bboxOf(f.geometry);
     if (!bb) continue;
-    f.id = ++id;
     const x0 = lon2x(bb[0], grid), x1 = lon2x(bb[2], grid);
     const y0 = lat2y(bb[3], grid), y1 = lat2y(bb[1], grid);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > MAX_CELLS_PER_FEATURE) { oversized++; continue; }
+    f.id = ++id;
     for (let x = x0; x <= x1; x++)
       for (let y = y0; y <= y1; y++) {
         const k = x + "/" + y;
@@ -50,6 +58,7 @@ export function writeTiles(feats, dir, grid) {
         arr.push(f);
       }
   }
+  if (oversized) console.log(`  ! ${oversized} feature(s) spanned >${MAX_CELLS_PER_FEATURE} cells and were dropped as corrupt`);
   let bytes = 0, max = 0;
   for (const [k, arr] of cells) {
     const [x, y] = k.split("/");

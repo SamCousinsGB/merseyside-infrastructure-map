@@ -67,8 +67,19 @@ pressure, line weight encodes type, so the two read independently. Click a pipe
 for its pressure tier, material, diameter, what it was inserted into, and survey
 date or install year depending on the source.
 
-**Above-ground sites** (1,360 in region) and **above-ground pipes** (266) come
-from two further Cadent open datasets. The sites are what Cadent describe as
+**Above-ground sites** draws on two sources under one toggle. Cadent's open
+dataset (1,360 in region) is shown as a filled dot; the MAPS survey adds 457 more
+as a ring, and **215 of those have no Cadent counterpart at all** — roughly half
+the AGIs on the map were missing before. MAPS records them only as OS background
+annotation (`Gas Gov`, `GVC`, `Gas Valve Compound`, `Gas Meter House`), never as
+a gas record, which is why they were easy to lose. The popup shows exactly which
+label was on the plan rather than paraphrasing it. Matching is deliberately
+strict: `GAS` and `GOV` as substrings also catch "The Gas Transportation
+Company", "AGAS DEVELOPMENTS LTD" and "Government", and anything noted as removed
+or abandoned is excluded.
+
+**Above-ground pipes** (266) come from a further Cadent open dataset. The Cadent
+sites are what Cadent describe as
 "assets that sit above ground … usually assets that reduce the pressure of gas" —
 governors and pressure-reduction installations, the green cabinets and fenced
 compounds you walk past. The pipes are the runs that surface to cross a river,

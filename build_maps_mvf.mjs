@@ -41,8 +41,14 @@
  *
  * Layer ids are a stable vocabulary across the dataset:
  *
- *   1000  OS As Built Geography                  background mapping (skipped)
- *   3000  Notes            4000  Dimensions      annotation      (skipped)
+ *   1000  OS As Built Geography                  background mapping - geometry
+ *                                                skipped, but its TEXT carries
+ *                                                the "Gas Gov" / "GVC" site
+ *                                                labels, which is the ONLY
+ *                                                place above-ground
+ *                                                installations are recorded
+ *   3000  Notes                                  annotation - AGI labels too
+ *   4000  Dimensions                             annotation      (skipped)
  *   6000  Mains Identifiers                      annotation      (skipped)
  *   21000 Low Pressure Mains & Plant             -> LP
  *   22000 Medium Pressure Mains & Plant          -> MP
@@ -315,15 +321,39 @@ function deobfuscate(raw) {
 function detectBoundary(raw) {
   const deob = deobfuscate(raw);
   const d = scanElements(deob, 0);
+  // Obfuscated end to end: no plain body at all. A handful of near-empty tiles
+  // are like this.
   if (d.clean && d.sawEndMetafile) return { start: raw.length, deob };
+  // Walk deob element boundaries from where the deobfuscated stream stops making
+  // sense back towards the start, taking the LAST offset from which the raw
+  // bytes parse cleanly through to END METAFILE.
+  //
+  // Parse-validity alone cannot pin the seam exactly: plain bytes often still
+  // look like valid elements once inverted, and an early candidate can pass the
+  // same test. Both directions were measured over ~1200 tiles. Scanning forward
+  // (earliest) leaves 5 chewed layer names but finds 724 FEWER APS attributes,
+  // because a too-early seam corrupts the header enough to lose elements
+  // outright. Scanning backward keeps all of them at the cost of a chewed tail
+  // on ~1% of OS-background layer NAMES. Nothing keys off those names - pressure
+  // tiers match on the numeric layer id - and a mangled label can only make the
+  // AGI matcher miss a site, never invent one. Coverage wins.
   for (let i = d.bounds.length - 1; i >= 0; i--) {
     const b = d.bounds[i];
     if (b < 64) break;
     const r = scanElements(raw, b);
-    if (r.clean && r.sawEndMetafile) return { start: b, deob };
+    if (!r.clean || !r.sawEndMetafile) continue;
+    return { start: b, deob };
   }
   return null;
 }
+// NOTE: parse the two regions SEPARATELY, re-anchoring at the seam. Splicing
+// them into one buffer and walking it end to end looks tidier and is a trap:
+// the seam is only known to be a valid boundary in the BODY, so if any header
+// element's length is misread the continuous walk desynchronises for the rest
+// of the file. That yields plausible-looking POLYLINEs full of garbage VDC
+// values, whose bounding boxes span whole degrees, and the z16 tiler then
+// faithfully writes each one into millions of cells. Re-anchoring costs a
+// straddling element at most; not re-anchoring costs the whole tile.
 
 // Walk command headers only, collecting element boundaries and noting whether
 // the stream ran to END METAFILE without hitting an impossible element class.
@@ -372,10 +402,54 @@ function* elements(buf, start, end) {
   }
 }
 
+// CGM strings are length-prefixed. 255 is an escape: the real length is the next
+// 16 bits (top bit = "another partition follows", which these tiles never use).
+// Without this a long string reads its own 0xFF as content, which is where the
+// stray "OS As Built Geographÿ" layer names came from.
 function readStr(buf, off) {
   if (off >= buf.length) return ["", off];
-  const len = buf[off];
-  return [buf.subarray(off + 1, off + 1 + len).toString("latin1"), off + 1 + len];
+  let len = buf[off], o = off + 1;
+  if (len === 255) {
+    if (o + 2 > buf.length) return ["", buf.length];
+    len = buf.readUInt16BE(o) & 0x7fff;
+    o += 2;
+  }
+  return [buf.subarray(o, o + len).toString("latin1"), o + len];
+}
+
+// TEXT (4/4)            : position(4) flag(2) string
+// RESTRICTED TEXT (4/5) : deltaWidth(2) deltaHeight(2) position(4) flag(2) string
+// Reading the position from offset 0 for restricted text yields the glyph box,
+// not the anchor - every label then lands within a few metres of the tile
+// origin, which looks plausible enough to miss.
+const textAnchor = (e) => {
+  const o = e.id === 5 ? 4 : 0;
+  return e.len >= o + 4 ? [e.data.readInt16BE(o), e.data.readInt16BE(o + 2)] : null;
+};
+const textString = (e) => {
+  const o = (e.id === 5 ? 8 : 4) + 2;
+  if (o >= e.len) return "";
+  const [s] = readStr(e.data, o);
+  return s;
+};
+
+// Above-ground installations, as annotated on the OS background layer. Kept
+// deliberately tight: "GAS" and "GOV" as substrings pull in "The Gas
+// Transportation Company", "AGAS DEVELOPMENTS LTD" and "Government", none of
+// which is an asset. Anything flagged removed or abandoned is not a live site.
+const AGI_PATTERNS = [
+  /^GAS\s*GOV(ERNOR)?\b/i,
+  /^(L\/P\s*)?GOVERNOR\b/i,
+  /^GVC\b/i,
+  /^GAS\s*VALVE/i,
+  /^GAS\s*METER\s*HOUSE/i,
+  /^GAS\s*WORKS/i,
+];
+const AGI_REJECT = /REMOVED|ABANDON|DISUSED|FORMER/i;
+function agiLabel(text) {
+  const t = (text || "").trim();
+  if (!t || AGI_REJECT.test(t)) return null;
+  return AGI_PATTERNS.some((re) => re.test(t)) ? t : null;
 }
 
 // APS ATTR payload: attribute name, then a length-prefixed structured data
@@ -472,7 +546,21 @@ function parseTile(file, opts) {
   let layerId = null, layerName = null, tier = null;
   let gr = null; // current grobject
   const features = [];
+  const agi = [];
   let pipes = 0, plant = 0;
+  const toLL = (vx, vy) => osgbToWgs84(minE + (vx - vx0) * sx, minN + (vy - vy0) * sy);
+
+  // Every tile declares its own VDC extent, so a coordinate far outside it is a
+  // misparse, not a long pipe. CGM does allow geometry to run past the extent
+  // (it is clipped on draw), so allow a whole tile of slop each way and reject
+  // only what is unmistakably wrong. Cheap, and it catches desynchronised
+  // parsing at the point it happens instead of downstream, where a single bad
+  // polyline's bounding box can span degrees and blow up the tiler.
+  const spanX = Math.abs(vx1 - vx0) || 16000, spanY = Math.abs(vy1 - vy0) || 16000;
+  const loX = Math.min(vx0, vx1) - spanX, hiX = Math.max(vx0, vx1) + spanX;
+  const loY = Math.min(vy0, vy1) - spanY, hiY = Math.max(vy0, vy1) + spanY;
+  const vdcSane = (vx, vy) => vx >= loX && vx <= hiX && vy >= loY && vy <= hiY;
+  let rejected = 0;
 
   const handle = (e) => {
     const key = `${e.cls}/${e.id}`;
@@ -514,16 +602,41 @@ function parseTile(file, opts) {
         const n = Math.floor(e.len / 4);
         if (n < 2) break;
         const coords = [];
+        let bad = false;
         for (let i = 0; i < n; i++) {
           const vx = e.data.readInt16BE(i * 4);
           const vy = e.data.readInt16BE(i * 4 + 2);
-          coords.push(osgbToWgs84(minE + (vx - vx0) * sx, minN + (vy - vy0) * sy));
+          if (!vdcSane(vx, vy)) { bad = true; break; }
+          coords.push(toLL(vx, vy));
         }
+        if (bad) { rejected++; break; }
         // Drop repeated vertices; the source has plenty of zero-length steps.
         const clean = coords.filter((c, i) => i === 0 || c[0] !== coords[i - 1][0] || c[1] !== coords[i - 1][1]);
         if (clean.length < 2) break;
         features.push(makeFeature("LineString", clean, tier, gr, false, meta));
         pipes++;
+        break;
+      }
+      case "4/4":   // TEXT
+      case "4/5": { // RESTRICTED TEXT
+        // Above-ground installations are annotated on the OS background layer
+        // (1000) and occasionally in Notes (3000) - NOT on the pressure layers,
+        // which is why they were missing entirely until now.
+        if (layerId !== 1000 && layerId !== 3000) break;
+        const label = agiLabel(textString(e));
+        if (!label) break;
+        const at = textAnchor(e);
+        if (!at || !vdcSane(at[0], at[1])) break;
+        agi.push({
+          type: "Feature",
+          properties: {
+            kind: "agi",
+            label,
+            note: layerId === 3000 ? "from drawing notes" : null,
+            surveyed: meta.Date || null,
+          },
+          geometry: { type: "Point", coordinates: toLL(at[0], at[1]) },
+        });
         break;
       }
       case "4/27": { // POLYSYMBOL - valves, governors, syphons and the like
@@ -533,7 +646,8 @@ function parseTile(file, opts) {
         for (let i = 0; i < n; i++) {
           const vx = e.data.readInt16BE(2 + i * 4);
           const vy = e.data.readInt16BE(2 + i * 4 + 2);
-          const pt = osgbToWgs84(minE + (vx - vx0) * sx, minN + (vy - vy0) * sy);
+          if (!vdcSane(vx, vy)) { rejected++; continue; }
+          const pt = toLL(vx, vy);
           features.push(makeFeature("Point", pt, tier, gr, true, meta));
           plant++;
         }
@@ -545,7 +659,7 @@ function parseTile(file, opts) {
   for (const e of elements(head, 0)) handle(e);
   if (bodyStart < raw.length) for (const e of elements(raw, bodyStart)) handle(e);
 
-  return { features, pipes, plant, facet: meta.Facet || path.basename(file) };
+  return { features, agi, pipes, plant, rejected, facet: meta.Facet || path.basename(file) };
 }
 
 // Per-feature properties are kept deliberately lean: at half a million features
@@ -632,7 +746,9 @@ function main() {
   }
 
   const byTier = { HPN: [], HPL: [], IP: [], MP: [], LP: [] };
-  let pipes = 0, plantN = 0, failed = 0, done = 0;
+  const agiAll = [];
+  let pipes = 0, plantN = 0, failed = 0, done = 0, rejectedAll = 0;
+  const failReasons = new Map();
 
   for (const f of wanted) {
     let r;
@@ -640,6 +756,8 @@ function main() {
       r = parseTile(f, { plant });
     } catch (e) {
       failed++;
+      const why = (e && e.message) || String(e);
+      failReasons.set(why, (failReasons.get(why) || 0) + 1);
       continue;
     }
     if (!r) { failed++; continue; }
@@ -647,13 +765,22 @@ function main() {
       const t = ft.properties.pressure;
       if (byTier[t]) byTier[t].push(ft);
     }
+    if (r.agi) agiAll.push(...r.agi);
+    rejectedAll += r.rejected || 0;
     pipes += r.pipes;
     plantN += r.plant;
     done++;
     if (done % 500 === 0) process.stdout.write(`\r  parsed ${done}/${wanted.length} tiles...`);
   }
   process.stdout.write(`\r  parsed ${done}/${wanted.length} tiles      \n`);
-  if (failed) console.log(`  (${failed} tiles unreadable or not MVF - skipped)`);
+  if (failed) {
+    console.log(`  (${failed} tiles unreadable or not MVF - skipped)`);
+    // Say WHY. A silent skip count hides a regression that only shows up as
+    // slightly less data than last time.
+    for (const [why, n] of [...failReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3))
+      console.log(`      ${String(n).padStart(5)} x ${why}`);
+  }
+  if (rejectedAll) console.log(`  (${rejectedAll} features outside their own tile extent - rejected as misparsed)`);
 
   // Rebuild the output tree from scratch so a re-run with a smaller extent
   // cannot leave stale geometry behind.
@@ -704,6 +831,30 @@ function main() {
     return;
   }
 
+  // Above-ground installations. One site can be labelled in more than one tile
+  // where it straddles a boundary, so collapse anything with the same label
+  // within about 11 m (4 dp) to a single point.
+  const agiSeen = new Set();
+  const agiOut = [];
+  for (const f of agiAll) {
+    const [lon, lat] = f.geometry.coordinates;
+    const k = `${f.properties.label}@${lon.toFixed(4)},${lat.toFixed(4)}`;
+    if (agiSeen.has(k)) continue;
+    agiSeen.add(k);
+    agiOut.push(f);
+  }
+  let agiMeta = null;
+  if (agiOut.length) {
+    fs.writeFileSync(
+      path.join(OUT_DIR, "agi.geojson"),
+      JSON.stringify({ type: "FeatureCollection", features: agiOut })
+    );
+    agiMeta = { file: "agi.geojson", count: agiOut.length };
+    console.log(
+      `  AGI ${String(agiOut.length).padStart(7)} sites    -> ${OUT_DIR}/agi.geojson  (${agiAll.length - agiOut.length} duplicate labels merged)`
+    );
+  }
+
   // WGS84 envelope of everything actually extracted. The map uses this to hide
   // the wider-but-coarser Cadent open-data mains wherever MAPS has better data,
   // so the two never draw the same pipe twice.
@@ -727,6 +878,7 @@ function main() {
         bounds: lo1 < lo0 ? null : [lo0, la0, lo1, la1],
         mains: pipes,
         plant: plantN,
+        agi: agiMeta,
         layers,
       },
       null,

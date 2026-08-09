@@ -559,7 +559,7 @@ function lazyGeoJSON(url, opts){
   });
   return group;
 }
-const gasAgSites=lazyGeoJSON('gas_ag_sites.geojson',{
+const gasAgSitesCadent=lazyGeoJSON('gas_ag_sites.geojson',{
   pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:GAS_AG_COL,fillOpacity:.95}),
   onEachFeature:(f,l)=>l.on('click',e=>{
     const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
@@ -569,6 +569,25 @@ const gasAgSites=lazyGeoJSON('gas_ag_sites.geojson',{
       +`<table><tr><td class="k">ref</td><td>${f.properties.id||'-'}</td></tr></table>`
       +gmaps(ll.lat,ll.lng)).openOn(map);})
 });
+// The same assets as surveyed in MAPS, where they are annotated on the OS
+// background layer rather than held as gas records - "Gas Gov", "GVC", "Gas
+// Valve Compound" and so on. Roughly half of these have no counterpart in
+// Cadent's open above-ground dataset, which is why AGI sites looked missing.
+// Drawn as a ring rather than a filled dot so the two sources stay tellable
+// apart at a glance without inventing a second colour.
+const gasAgSitesMaps=lazyGeoJSON('tiles/mapsgeo/agi.geojson',{
+  pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5.5,color:GAS_AG_COL,weight:2.5,fillColor:'#fff',fillOpacity:.95}),
+  onEachFeature:(f,l)=>l.on('click',e=>{
+    const p=f.properties, ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
+    L.popup({className:'tt'}).setLatLng(ll).setContent(
+      `<div class="pt">Above-ground gas site</div>`
+      +`<div class="pm">National Grid MAPS &middot; ${p.note||'as annotated on the surveyed plan'}</div>`
+      +`<table><tr><td class="k">marked</td><td>${p.label||'-'}</td></tr>`
+      +(p.surveyed?`<tr><td class="k">surveyed</td><td>${String(p.surveyed).replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3')}</td></tr>`:'')
+      +`</table>`
+      +gmaps(ll.lat,ll.lng)).openOn(map);})
+});
+const gasAgSites=L.layerGroup([gasAgSitesCadent,gasAgSitesMaps]);
 const gasAgPipes=lazyGeoJSON('gas_ag_pipes.geojson',{
   // solid and heavier than the buried mains: these genuinely are overground,
   // which is exactly what the map's solid/dashed convention means
