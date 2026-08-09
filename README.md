@@ -45,7 +45,7 @@ Transformers are yellow markers. Click a transformer for "LV transformer" + its
 capacity, or a cable for its type, voltage and capacity.
 
 **Mains** is one toggle over two sources. Where the National Grid MAPS survey
-reaches (Merseyside) it supplies the pipes — surveyed geometry with real
+reaches (Merseyside through to Chester, Warrington and Wigan) it supplies the pipes — surveyed geometry with real
 diameter, material and a full pressure split. Outside that envelope the layer
 falls back to Cadent's open-data tiles, which cover a wider region (Cheshire,
 Warrington, north Wales). The two never draw the same pipe: the open-data tiles
@@ -57,7 +57,7 @@ since they are street-level clutter at any wider view.
 Detail arrives with zoom rather than with extra toggles: the high-pressure spine
 draws from **z11**, intermediate from **z12**, medium from **z13** and the dense
 low-pressure network from **z15**. **Valves & plant** (governors, syphons, valves
-— 249k of them) is a separate toggle, since it is visually heavy.
+— 451k of them) is a separate toggle, since it is visually heavy.
 
 Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
 near-black for the national transmission network), with a legend in the Gas
@@ -92,7 +92,12 @@ The above-ground pipes are **not** duplicates of the `ag_ind=True` pipes in GPI
 Open: sampled locations carry an above-ground pipe here while GPI marks all 46
 pipes at the same spot as buried. The two are complementary.
 
-In this region the mains network merges to ~170k polylines: 157k mains and 13k
+The figures below describe the **Cadent open tiles**, which now supply Mains only
+outside the MAPS envelope (and still supply Service pipes everywhere). Inside it
+the numbers that matter are the MAPS ones: 491k mains and 451k plant across
+942k features.
+
+In this region the Cadent network merges to ~170k polylines: 157k mains and 13k
 services, 161k low-pressure and 9.5k medium-pressure. Material is mostly
 polyethylene (145k) with the iron legacy still visible — 7.9k cast iron, 4.5k
 spun iron, 4.2k ductile iron, and 162 asbestos. Install dates run 1850–2026
@@ -101,21 +106,21 @@ and 37k in inches — which Cadent's own catalogue flags; the map keeps the unit
 alongside the value rather than converting, and never merges pipes across
 differing diameter units.
 
-This is Cadent's **GPI Open** dataset, which is the low-pressure (≤75 mbarg) and
-medium-pressure (>75 mbarg, ≤2 barg) network only. Cadent's intermediate- and
-high-pressure data is published separately as a **"Shared"** dataset requiring a
-data sharing agreement, so it is deliberately *not* used here — this map is
-public, and a sharing agreement does not carry a right to republish.
+That is Cadent's **GPI Open** dataset, which is the low-pressure (≤75 mbarg) and
+medium-pressure (>75 mbarg, ≤2 barg) network only — it carries no IP or HP.
+Cadent's intermediate- and high-pressure data is published separately as a
+**"Shared"** dataset requiring a data sharing agreement, which does not carry a
+right to republish, so it is deliberately *not* used here. The IP and HP tiers
+you see come from the MAPS survey instead.
 
-The **high-pressure transmission network** (NTS/LTS backbone) is instead shown
-from **OpenStreetMap** (`usage=transmission`, ODbL), drawn as a heavy dark line —
-dashed where buried. It is the only openly-republishable source for the HP
-routes, since Cadent's own IP/HP data is the Shared dataset above. Coverage is
-**partial** — what OSM contributors have traced, not a complete asset register —
-so read it as "known HP corridors", not all of them. ~88 km in region. These
-lines also appear, undistinguished, in the general **Pipelines** layer (which
-shows every substance-tagged OSM gas line); the Transmission toggle pulls the
-high-pressure subset out on its own.
+The **Transmission** layer is **OpenStreetMap** (`usage=transmission`, ODbL),
+drawn as a heavy dark line — dashed where buried. It merges what used to be two
+separate toggles (the dedicated HP transmission pull and the general
+substance-tagged gas pipelines), since both describe the same kind of asset.
+Coverage is **partial** — what OSM contributors have traced, not a complete asset
+register — so read it as "known HP corridors", not all of them. ~88 km in region.
+It is kept alongside Mains rather than folded into it because 45 of its 54 ways
+run outside the MAPS envelope, so it is reach rather than duplication.
 
 Note this HP layer does **not** connect to every above-ground site: the site in
 Aintree, for instance, is fed by an intermediate/high-pressure main that is in
@@ -223,7 +228,9 @@ node build_maps_mvf.mjs --src="C:/path/to/MapsViewerJuly2026"
 
 or put the path in `local/mvf.config.json` (git-ignored, since it is
 machine-specific) and just run `node build_maps_mvf.mjs`. Options: `--bbox=minE,minN,maxE,maxN`
-in EPSG:27700 (default is Merseyside), `--all` for the whole disc.
+in EPSG:27700 (default is Merseyside), or `--all` to take everything the source
+holds — which is the right mode when the source is itself a selection, since
+MAPS Viewer's tile picker installs the squares you chose to `C:\MAPS`.
 
 A `.mvf` tile is a binary WebCGM metafile behind a light byte obfuscation
 (`plain[i] = ~raw[i^1]`) over a variable-length header; the picture body after it

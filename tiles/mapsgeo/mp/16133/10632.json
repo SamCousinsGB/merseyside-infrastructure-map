@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"MP","kind":"main","asset_id":"315116541","spec":"213MM PE (IN 10\" CI)","inserted_into":"10\" CI","diameter_mm":213,"material":"PE","surveyed":"20251224"},"geometry":{"type":"LineString","coordinates":[[-2.758536,53.278298],[-2.75842,53.278327],[-2.756892,53.278572]]},"id":42944}]}

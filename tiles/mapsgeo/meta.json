@@ -1,19 +1,19 @@
 {
   "source": "MAPS Viewer (NG,GDFO)",
   "extent27700": [
-    320000,
-    377000,
-    357000,
+    318500,
+    360000,
+    380000,
     422000
   ],
   "bounds": [
     -3.198587,
-    53.285149,
-    -2.646817,
-    53.692707
+    53.134005,
+    -2.301016,
+    53.694087
   ],
-  "mains": 254361,
-  "plant": 248673,
+  "mains": 491110,
+  "plant": 451208,
   "layers": [
     {
       "id": "maps-hpn",
@@ -21,7 +21,7 @@
       "label": "HP · National transmission (>7 barg)",
       "color": "#3B0D0D",
       "weight": 4.6,
-      "count": 266,
+      "count": 1297,
       "layer": "National High Pressure Mains & Plant",
       "file": "hpn.geojson"
     },
@@ -31,7 +31,7 @@
       "label": "HP · Local high pressure (>7 barg)",
       "color": "#7A2222",
       "weight": 4,
-      "count": 844,
+      "count": 2181,
       "layer": "Local High Pressure Mains & Plant",
       "file": "hpl.geojson"
     },
@@ -41,9 +41,11 @@
       "label": "IP · Intermediate (>2, ≤7 barg)",
       "color": "#9A3412",
       "weight": 3,
-      "count": 5846,
+      "count": 11446,
       "layer": "Intermediate Pressure Mains & Plant",
-      "file": "ip.geojson"
+      "tiles": "ip",
+      "grid": 14,
+      "minzoom": 12
     },
     {
       "id": "maps-mp",
@@ -51,7 +53,7 @@
       "label": "MP · Medium (>75 mbarg, ≤2 barg)",
       "color": "#B4530A",
       "weight": 2.4,
-      "count": 39888,
+      "count": 79322,
       "layer": "Medium Pressure Mains & Plant",
       "tiles": "mp",
       "grid": 15,
@@ -63,7 +65,7 @@
       "label": "LP · Low (≤75 mbarg)",
       "color": "#E8730C",
       "weight": 1.8,
-      "count": 456190,
+      "count": 848072,
       "layer": "Low Pressure Mains & Plant",
       "tiles": "lp",
       "grid": 16,

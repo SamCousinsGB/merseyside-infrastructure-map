@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"601458331","spec":"63MM PE","diameter_mm":63,"material":"PE","surveyed":"20241225"},"geometry":{"type":"LineString","coordinates":[[-2.538113,53.579023],[-2.538084,53.579041],[-2.538034,53.579006]]},"id":145119}]}

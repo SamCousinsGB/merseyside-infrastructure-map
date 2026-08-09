@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"311164760","spec":"55MM PE (IN 3\" CI)","inserted_into":"3\" CI","diameter_mm":55,"material":"PE","surveyed":"20251220"},"geometry":{"type":"LineString","coordinates":[[-2.383756,53.55313],[-2.383409,53.553821],[-2.383402,53.553836]]},"id":218489}]}

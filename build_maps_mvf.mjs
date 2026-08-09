@@ -604,7 +604,11 @@ function main() {
     return;
   }
 
-  const bbox = args.all ? null : args.bbox || cfg.bbox || DEFAULT_BBOX;
+  // `all` takes everything the source holds. That is the right mode when the
+  // source IS a selection - MAPS Viewer's tile picker installs the squares you
+  // chose to C:\MAPS, so pointing at that and taking the lot reproduces your
+  // selection exactly, instead of second-guessing it with a rectangle.
+  const bbox = args.all || cfg.all ? null : args.bbox || cfg.bbox || DEFAULT_BBOX;
   const plant = cfg.plant !== false;
 
   console.log(`Source : ${root}`);

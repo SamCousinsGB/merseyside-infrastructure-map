@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"220000428329","spec":"75MM PE (IN 4\" CI)","inserted_into":"4\" CI","diameter_mm":75,"material":"PE","surveyed":"20240613"},"geometry":{"type":"LineString","coordinates":[[-2.587438,53.41949],[-2.587313,53.419303],[-2.587203,53.419139]]},"id":741326}]}

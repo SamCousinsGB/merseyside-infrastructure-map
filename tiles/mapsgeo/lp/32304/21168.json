@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"311148737","spec":"90MM PE (IN 6\" CI)","inserted_into":"6\" CI","diameter_mm":90,"material":"PE","surveyed":"20260224"},"geometry":{"type":"LineString","coordinates":[[-2.54452,53.592985],[-2.543965,53.592689],[-2.543159,53.592268]]},"id":175030}]}

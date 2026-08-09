@@ -3,8 +3,11 @@
 
   "source": "C:/path/to/MapsViewerJuly2026",
 
-  "_bbox": "EPSG:27700 [minE, minN, maxE, maxN]. Omit for the Merseyside default; pass --all on the command line for the whole disc.",
+  "_bbox": "EPSG:27700 [minE, minN, maxE, maxN]. Omit for the Merseyside default.",
   "bbox": [320000, 377000, 357000, 422000],
+
+  "_all": "true takes every tile the source holds, ignoring bbox. Use this when the source is already a selection - MAPS Viewer's tile picker installs the squares you chose to C:/MAPS, so {\"source\":\"C:/MAPS\",\"all\":true} reproduces that selection exactly. Pointing at the disc with a bbox is more reproducible if you re-pick later.",
+  "all": false,
 
   "_plant": "false to skip valves/governors/syphons and extract mains only.",
   "plant": true
