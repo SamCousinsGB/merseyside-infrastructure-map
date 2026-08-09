@@ -96,6 +96,7 @@ const fakeMap = {
   getBounds() { return bounds(); },
   closePopup() {}, setView() {}, getCenter() { return { lat: 53.4, lng: -2.98 }; },
   createPane() { return el(); },
+  attributionControl: { addAttribution() { return this; }, setPrefix() { return this; } },
 };
 
 const L = {

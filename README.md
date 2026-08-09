@@ -30,7 +30,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | Cadent **mains**, **service pipes**, **above-ground sites** and **above-ground pipes**, plus OSM gas pipelines and gas holders |
+| **Gas** | High-pressure **transmission (NTS/LTS)**, Cadent **mains**, **service pipes**, **above-ground sites** and **above-ground pipes**, plus OSM gas pipelines and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
@@ -96,6 +96,22 @@ medium-pressure (>75 mbarg, ≤2 barg) network only. Cadent's intermediate- and
 high-pressure data is published separately as a **"Shared"** dataset requiring a
 data sharing agreement, so it is deliberately *not* used here — this map is
 public, and a sharing agreement does not carry a right to republish.
+
+The **high-pressure transmission network** (NTS/LTS backbone) is instead shown
+from **OpenStreetMap** (`usage=transmission`, ODbL), drawn as a heavy dark line —
+dashed where buried. It is the only openly-republishable source for the HP
+routes, since Cadent's own IP/HP data is the Shared dataset above. Coverage is
+**partial** — what OSM contributors have traced, not a complete asset register —
+so read it as "known HP corridors", not all of them. ~88 km in region. These
+lines also appear, undistinguished, in the general **Pipelines** layer (which
+shows every substance-tagged OSM gas line); the Transmission toggle pulls the
+high-pressure subset out on its own.
+
+Note this HP layer does **not** connect to every above-ground site: the site in
+Aintree, for instance, is fed by an intermediate/high-pressure main that is in
+neither GPI Open nor OSM (the nearest mapped transmission line is ~10 km away).
+A pressure-reduction site must be fed at higher pressure than it outputs, so its
+inlet is exactly the tier the open data omits.
 
 Switchable basemaps: Street (OSM), Satellite, Satellite + labels, Topographic,
 and a clean Carto style.
@@ -196,6 +212,8 @@ committed as if it were complete.
   portal (`gas-pipe-infrastructure-gpi_open`)
 - `gas_ag_sites.geojson`, `gas_ag_pipes.geojson` — Cadent above-ground sites and
   pipes (`above-ground-infrastructure-assets-open`, `agp-above-ground-pipes-open`)
+- `gas_transmission.geojson` — high-pressure transmission pipelines from OSM
+  (`man_made=pipeline` + `usage=transmission`); rebuild with `node fetch_gas_transmission.mjs`
 - `extra_infra.geojson` — extra OSM infrastructure (full pipeline routes, tank
   farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
   merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`
@@ -227,11 +245,18 @@ committed as if it were complete.
   above or below ground.
 
 ## Attribution
+
+The live map shows a data credit in the corner; Cadent's licence requires the
+exact string **"From Cadent Gas Open Data"**, which the attribution control
+carries.
+
 - Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors, licensed under [ODbL](https://opendatacommons.org/licenses/odbl/).
-- Gas network data © [Cadent Gas Limited](https://cadentgas.opendatasoft.com/),
-  from their open data portal. Contains public sector information licensed under
-  the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+  This includes the high-pressure gas **transmission** layer (`usage=transmission`).
+- Gas network data — **From Cadent Gas Open Data** ©
+  [Cadent Gas Limited](https://cadentgas.opendatasoft.com/), from their open data
+  portal. Contains public sector information licensed under the
+  [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
   **Not for use in digging practices** — for safe digging, consult
   [LSBUD](https://lsbud.co.uk/).
 - LV network data © [SP Energy Networks](https://www.spenergynetworks.co.uk/),

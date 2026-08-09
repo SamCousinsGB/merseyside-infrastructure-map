@@ -194,6 +194,17 @@ const bases={
 };
 bases['Street (OSM)'].addTo(map);
 
+// Persistent credit for the OVERLAY data (the basemaps carry their own via each
+// tileLayer's attribution). Cadent's open-data licence requires the exact string
+// "From Cadent Gas Open Data"; SP Energy Networks and OpenStreetMap (ODbL, for
+// the OSM pipelines + the transmission layer) are credited alongside. Always
+// shown, since these layers are the point of the map even when toggled off.
+map.attributionControl.addAttribution(
+  'Gas: From Cadent Gas Open Data (OGL v3.0) &middot; ' +
+  'LV: &copy; SP Energy Networks &middot; ' +
+  'Infrastructure: &copy; OpenStreetMap contributors (ODbL)'
+);
+
 // Data + layer containers are populated by initData() once data.json has loaded,
 // so the map/basemap paint immediately instead of waiting on a 4.6MB inline blob.
 map.fitBounds([[52.95,-4.90],[53.72,-2.45]]);   // frame Merseyside straight away
@@ -533,6 +544,30 @@ const gasAgPipes=lazyGeoJSON('gas_ag_pipes.geojson',{
       +`<div class="pm">Cadent &middot; crossing a river, bridge or ravine</div>`
       +`<table><tr><td class="k">length</td><td>${p.len!=null?(p.len+'&nbsp;m'):'-'}</td></tr>`
       +`<tr><td class="k">ref</td><td>${p.id||'-'}</td></tr></table>`
+      +gmaps(ll.lat,ll.lng)).openOn(map);})
+});
+
+// ---- High-pressure gas transmission (NTS/LTS backbone) -----------------------
+// From OpenStreetMap (usage=transmission), ODbL - the only openly-republishable
+// source for the HP routes, since Cadent's own IP/HP data is Shared-tier. This
+// is the high-pressure spine that FEEDS the local network; the pressure-reducing
+// above-ground sites sit on it. Coverage is what OSM mappers have traced, not a
+// complete asset register, so it is "known HP corridors", not all of them.
+// Drawn as a heavy dark line, dashed where buried, so it reads as the backbone
+// behind the thinner distribution network. These lines also appear in the
+// general "Pipelines" layer (which shows every gas line); this pulls the
+// transmission subset out on its own toggle.
+const GAS_TRANS_COL='#5A1A1A';
+const gasTrans=lazyGeoJSON('gas_transmission.geojson',{
+  style:f=>({color:GAS_TRANS_COL,weight:4,opacity:.9,dashArray:f.properties.ug?'10 6':null}),
+  onEachFeature:(f,l)=>l.on('click',e=>{
+    const p=f.properties, ll=e.latlng||map.getCenter();
+    L.popup({className:'tt'}).setLatLng(ll).setContent(
+      `<div class="pt">Gas transmission pipeline</div>`
+      +`<div class="pm">High-pressure network (NTS / LTS) &middot; OpenStreetMap</div>`
+      +(p.name?`<div class="pn">${p.name}</div>`:'')
+      +`<table><tr><td class="k">position</td><td>${p.ug?'below ground':'above / at surface'}</td></tr></table>`
+      +(p.osm?`<a href="${p.osm}" target="_blank" rel="noopener">${p.id}</a>`:'')
       +gmaps(ll.lat,ll.lng)).openOn(map);})
 });
 
@@ -1008,6 +1043,7 @@ const GROUPS = [
       { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
       { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
   { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
+      { key:'gas.trans',  label:'Transmission (HP)',  icon:ICON.pipe,    color:GAS_TRANS_COL, layer:gasTrans },
       { key:'gas.pipe',   label:'Pipelines',          icon:ICON.pipe,    color:FX.gas,      layer:sub['gas.pipe'] },
       { key:'gas.main',   label:'Mains',              icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasMains },
       { key:'gas.svc',    label:'Service pipes',      icon:ICON.pipe,    color:GAS_SVC_COL, layer:gasSvc },
