@@ -30,7 +30,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | **Mains** (National Grid MAPS survey, falling back to Cadent open data outside its extent), **service pipes**, **valves & plant**, **transmission (NTS/LTS)**, **above-ground sites**, **above-ground pipes** and gas holders |
+| **Gas** | Pipes by pressure — **high >7 barg**, **intermediate ≤7**, **medium ≤2**, **low ≤75 mbarg** — plus **services to premises**, **installations (AGI)**, **valves & fittings**, **above-ground pipes** and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
@@ -44,20 +44,33 @@ limited, **red** = at/near capacity, **grey** = not assessed); switch
 Transformers are yellow markers. Click a transformer for "LV transformer" + its
 capacity, or a cable for its type, voltage and capacity.
 
-**Mains** is one toggle over two sources. Where the National Grid MAPS survey
-reaches (Merseyside through to Chester, Warrington and Wigan) it supplies the pipes — surveyed geometry with real
-diameter, material and a full pressure split. Outside that envelope the layer
-falls back to Cadent's open-data tiles, which cover a wider region (Cheshire,
-Warrington, north Wales). The two never draw the same pipe: the open-data tiles
-are clipped to outside the MAPS envelope, which the map reads from
-`tiles/mapsgeo/meta.json`. **Service pipes** — the last-mile connections into
-individual premises — stay on Cadent's data and only appear from **zoom 17**,
-since they are street-level clutter at any wider view.
+**The gas drawer is organised by pressure**, because that is the question people
+bring to it — what is under this street, and how hard is it pushing. Each toggle
+draws from every source that carries that tier, so a switch is a statement about
+the gas rather than about where the data came from:
 
-Detail arrives with zoom rather than with extra toggles: the high-pressure spine
-draws from **z11**, intermediate from **z12**, medium from **z13** and the dense
-low-pressure network from **z15**. **Valves & plant** (governors, syphons, valves
-— 451k of them) is a separate toggle, since it is visually heavy.
+- the **MAPS survey** wherever it reaches (Merseyside through to Chester,
+  Warrington and Wigan), with real diameter, material and asset id;
+- **Cadent open data** for the same tier, clipped to *outside* the MAPS envelope
+  so no pipe is ever drawn twice — the map reads that envelope from
+  `tiles/mapsgeo/meta.json`. GPI Open is LP/MP only, so it contributes nothing
+  to the high and intermediate toggles;
+- **OSM transmission** ways, which are high pressure by definition, so they sit
+  inside the High toggle rather than in a separate layer of their own.
+
+Each tier still gates on zoom — high from **z11**, intermediate **z12**, medium
+**z13**, and the dense low-pressure network **z15** — so a wide view gives the
+strategic picture instead of a solid mat of orange.
+
+**Services to premises** are the last-mile connections into individual
+buildings, from **z16**. Note these come *only* from Cadent: the MAPS layer is
+"Mains & Plant" and holds no services at all, and Cadent's open service coverage
+is partial (~13k in region against ~157k mains), so expect gaps rather than a
+service to every house.
+
+**Installations (AGI)** are the above-ground sites — governor compounds and
+valve compounds. **Valves & fittings** is the in-line plant on the pipes
+themselves (451k of them), split out because it is visually heavy.
 
 Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
 near-black for the national transmission network), with a legend in the Gas
@@ -124,14 +137,13 @@ Cadent's intermediate- and high-pressure data is published separately as a
 right to republish, so it is deliberately *not* used here. The IP and HP tiers
 you see come from the MAPS survey instead.
 
-The **Transmission** layer is **OpenStreetMap** (`usage=transmission`, ODbL),
-drawn as a heavy dark line — dashed where buried. It merges what used to be two
-separate toggles (the dedicated HP transmission pull and the general
-substance-tagged gas pipelines), since both describe the same kind of asset.
+The OSM transmission ways (`usage=transmission`, ODbL) are inside the **High**
+toggle — they are the high-pressure end of the same network, and a separate
+"Transmission" layer just raised the question of how it differed from Mains.
 Coverage is **partial** — what OSM contributors have traced, not a complete asset
-register — so read it as "known HP corridors", not all of them. ~88 km in region.
-It is kept alongside Mains rather than folded into it because 45 of its 54 ways
-run outside the MAPS envelope, so it is reach rather than duplication.
+register — so read the high-pressure picture as "known HP corridors", not all of
+them. ~88 km in region, 45 of its 54 ways outside the MAPS envelope, so it adds
+reach rather than duplicating the survey.
 
 Note this HP layer does **not** connect to every above-ground site: the site in
 Aintree, for instance, is fed by an intermediate/high-pressure main that is in

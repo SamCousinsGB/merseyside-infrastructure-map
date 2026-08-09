@@ -426,7 +426,10 @@ const GAS_TYPE={m:'Gas main',s:'Gas service pipe',r:'Gas riser',
                 n:'NTS transmission pipe',l:'LTS transmission pipe',u:'Gas pipe'};
 const GAS_DU={MM:'mm',I:'in',UN:''};
 const GAS_GRID=14, GAS_MAXCACHE=80;
-const GAS_MAIN_MINZOOM=14, GAS_SVC_MINZOOM=17;
+// Services were gated at z17 with nothing to say so: switch them on any wider
+// out and the layer silently drew nothing, which reads as broken rather than as
+// zoomed out. z16 matches the LV cables, and hintText() now names them.
+const GAS_MAIN_MINZOOM=14, GAS_SVC_MINZOOM=16;
 // Colour encodes PRESSURE TIER, weight encodes pipe type. The "Colour pipes by
 // pressure" toggle in the Gas drawer mirrors the LV capacity control: on by
 // default; switched off, pipes fall back to one colour per type so mains and
@@ -487,18 +490,13 @@ function outsideMaps(f){
   if(!p||typeof p[0]!=='number') return true;
   return p[0]<mapsBounds[0]||p[0]>mapsBounds[2]||p[1]<mapsBounds[1]||p[1]>mapsBounds[3];
 }
+// `clip` filters features. The open-data mains are now split across the four
+// pressure toggles, so this is called once per tier over the same tiles - hence
+// the shared URL-keyed cache rather than one cache per layer.
 function gasTileLayer(dir,minzoom,clip){
-  const cache=new Map(); const group=L.layerGroup();
+  const group=L.layerGroup();
   let layer=null, token=0;
-  async function tile(x,y){
-    const k=x+'/'+y;
-    if(cache.has(k)){const v=cache.get(k);cache.delete(k);cache.set(k,v);return v;}
-    let fc={features:[]};
-    try{const r=await fetch('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
-    cache.set(k,fc);
-    while(cache.size>GAS_MAXCACHE)cache.delete(cache.keys().next().value);
-    return fc;
-  }
+  const tile=(x,y)=>fetchTileJSON('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json');
   async function render(){
     if(!map.hasLayer(group)||map.getZoom()<minzoom){ if(layer)layer.clearLayers(); return; }
     const t=++token;
@@ -526,7 +524,7 @@ function gasTileLayer(dir,minzoom,clip){
   group.on('remove',()=>{if(layer)layer.clearLayers();updateLvHint();});
   return group;
 }
-const gasMains=gasTileLayer('main',GAS_MAIN_MINZOOM,outsideMaps);
+// (the open-data mains are built per pressure tier further down, by cadentTier)
 const gasSvc=gasTileLayer('svc',GAS_SVC_MINZOOM);
 function syncGas(){ for(const r of gasRenders) r(); }
 
@@ -767,13 +765,16 @@ async function buildMapsGas(){
   const specs = (man&&man.layers||[]).filter(s => s && (s.file||s.tiles));
   if(!specs.length) return null;
   if(Array.isArray(man.bounds) && man.bounds.length===4) mapsBounds = man.bounds;
-  const mains=[], plant=[];
+  // Keyed by tier, not merged: the drawer now offers one toggle per pressure,
+  // so each tier has to be switchable on its own.
+  const mainsByTier={}, plant=[];
   for(const spec of specs){
-    if(spec.tier) localTiers.add(String(spec.tier).toUpperCase());
-    mains.push(tierLayer(spec,'tiles/mapsgeo/',{filter:f=>!isPlantFeature(f), gated:false}));
-    plant.push(tierLayer(spec,'tiles/mapsgeo/',{filter:isPlantFeature,       gated:false}));
+    const tier=String(spec.tier||'').toUpperCase();
+    if(tier) localTiers.add(tier);
+    mainsByTier[tier]=tierLayer(spec,'tiles/mapsgeo/',{filter:f=>!isPlantFeature(f), gated:false});
+    plant.push(tierLayer(spec,'tiles/mapsgeo/',{filter:isPlantFeature, gated:false}));
   }
-  return { mains:L.layerGroup(mains), plant:L.layerGroup(plant) };
+  return { mainsByTier, plant:L.layerGroup(plant) };
 }
 
 async function loadTierLayers(base, manifestUrl, opts){
@@ -808,7 +809,7 @@ let lvHintEl=null;
 function hintText(){
   const z=map.getZoom(), want=[];
   if(map.hasLayer(lvNetwork)&&z<14) want.push('LV network');
-  if(map.hasLayer(gasMains)&&z<GAS_MAIN_MINZOOM) want.push('gas network');
+  if(map.hasLayer(gasSvc)&&z<GAS_SVC_MINZOOM) want.push('gas services');
   // Tiled local layers are zoom-gated too, and each tier at its own zoom - say
   // which one is waiting rather than leaving a switched-on layer looking broken.
   for(const g of localGated) if(map.hasLayer(g.layer)&&z<g.minzoom) want.push(g.label.replace(/\s*·.*$/,''));
@@ -1050,8 +1051,12 @@ const LeafLayerDeck = L.Control.extend({
       // LV capacity for power, pressure tiers for gas
       const legend = group.querySelector('[data-rag]');
       if (legend) {
+        // gas passes an ARRAY (one layer per pressure): the legend belongs on
+        // screen as soon as any one of them is showing.
         const gate = g.key === 'gas' ? cfg.gasMains : cfg.lvNetwork;
-        legend.classList.toggle('is-on', !!gate && m.hasLayer(gate));
+        const lit = Array.isArray(gate) ? gate.some(l => l && m.hasLayer(l))
+                                        : (!!gate && m.hasLayer(gate));
+        legend.classList.toggle('is-on', lit);
       }
       reflow();
     };
@@ -1273,17 +1278,30 @@ async function initData(fc){
     if(hvLabelsOn) buildHvLabels();               // power stations arrive here
   }).catch(()=>{});
 
-// Two composite toggles, so the drawer lists assets rather than data sources.
-//   Mains        - the MAPS extract where it reaches, plus the wider open-data
-//                  tiles clipped to outside it (see outsideMaps), so the better
-//                  survey wins and the coverage gap is still filled.
-//   Transmission - the two OSM pipeline pulls, which were separate fetches
-//                  describing the same kind of asset. 45 of the 54 transmission
-//                  ways sit outside the MAPS envelope, so this is real reach,
-//                  not a duplicate of Mains.
+// The gas drawer is organised by PRESSURE, because that is the question people
+// actually bring to it - what is under this street, and how hard is it pushing.
+// A single "Mains" toggle hiding four tiers, plus a separate "Transmission"
+// layer that is just the high-pressure end of the same network, made the list
+// unreadable.
+//
+// Each tier draws from every source that has it, so a toggle is a statement
+// about the gas rather than about where the data came from:
+//   MAPS extract   surveyed, wherever it reaches
+//   Cadent open    the same tier, clipped to OUTSIDE the MAPS envelope so no
+//                  pipe is ever drawn twice (LP/MP only - GPI Open has no IP/HP)
+//   OSM            the transmission ways, which are high pressure by definition
 const grp = (...ls) => { const a = ls.filter(Boolean); return a.length ? L.layerGroup(a) : null; };
-const gasNetwork      = grp(mapsGas && mapsGas.mains, gasMains);
-const gasTransmission = grp(gasTrans, sub['gas.pipe']);
+const mt = (mapsGas && mapsGas.mainsByTier) || {};
+// Cadent mains of one tier, outside the MAPS envelope. `p` is Cadent's own
+// pressure code.
+const cadentTier = (...codes) =>
+  gasTileLayer('main', GAS_MAIN_MINZOOM, f => outsideMaps(f) && codes.includes(f.properties.p));
+
+const gasHigh  = grp(mt.HPN, mt.HPL, cadentTier('HP'), gasTrans, sub['gas.pipe']);
+const gasInter = grp(mt.IP,  cadentTier('IP'));
+const gasMed   = grp(mt.MP,  cadentTier('MP'));
+const gasLow   = grp(mt.LP,  cadentTier('LP','UN'));
+const gasPressureLayers = [gasHigh, gasInter, gasMed, gasLow].filter(Boolean);
 
 const GROUPS = [
   { key:'power', label:'Power', color:FX.hv, icon:ICON.hv, children:[
@@ -1294,13 +1312,18 @@ const GROUPS = [
       { key:'fuel.pipe', label:'Pipelines',  icon:ICON.pipe, color:FX.fuel, layer:sub['fuel.pipe'] },
       { key:'fuel.tank', label:'Tank farms', icon:ICON.tank, color:FX.fuel, layer:sub['fuel.tank'] } ] },
   { key:'gas', label:'Gas', color:FX.gas, icon:ICON.gas, children:[
-      { key:'gas.main',   label:'Mains',              icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasNetwork },
-      { key:'gas.svc',    label:'Service pipes',      icon:ICON.pipe,    color:GAS_SVC_COL, layer:gasSvc },
-      { key:'gas.plant',  label:'Valves &amp; plant', icon:ICON.station, color:GAS_COL.IP,  layer:mapsGas&&mapsGas.plant },
-      { key:'gas.trans',  label:'Transmission',       icon:ICON.pipe,    color:GAS_TRANS_COL, layer:gasTransmission },
-      { key:'gas.agsite', label:'Above-ground sites', icon:ICON.station, color:GAS_AG_COL,  layer:gasAgSites },
-      { key:'gas.agpipe', label:'Above-ground pipes', icon:ICON.pipe,    color:GAS_AG_COL,  layer:gasAgPipes },
-      { key:'gas.hold',   label:'Gas holders',        icon:ICON.gas,     color:FX.gas,      layer:sub['gas.hold'] } ] },
+      // by pressure, biggest first - the barg ranges are in the label because
+      // "high" and "medium" mean nothing without them
+      { key:'gas.hp',     label:'High &gt;7 barg',        icon:ICON.pipe,    color:GAS_COL.HPL, layer:gasHigh },
+      { key:'gas.ip',     label:'Intermediate &le;7 barg',icon:ICON.pipe,    color:GAS_COL.IP,  layer:gasInter },
+      { key:'gas.mp',     label:'Medium &le;2 barg',      icon:ICON.pipe,    color:GAS_COL.MP,  layer:gasMed },
+      { key:'gas.lp',     label:'Low &le;75 mbarg',       icon:ICON.pipe,    color:GAS_COL.LP,  layer:gasLow },
+      // then the things that are not pipe runs
+      { key:'gas.svc',    label:'Services to premises',   icon:ICON.pipe,    color:GAS_SVC_COL, layer:gasSvc },
+      { key:'gas.agsite', label:'Installations (AGI)',    icon:ICON.station, color:GAS_AG_COL,  layer:gasAgSites },
+      { key:'gas.plant',  label:'Valves &amp; fittings',  icon:ICON.station, color:GAS_COL.IP,  layer:mapsGas&&mapsGas.plant },
+      { key:'gas.agpipe', label:'Above-ground pipes',     icon:ICON.pipe,    color:GAS_AG_COL,  layer:gasAgPipes },
+      { key:'gas.hold',   label:'Gas holders',            icon:ICON.gas,     color:FX.gas,      layer:sub['gas.hold'] } ] },
   { key:'water', label:'Water', color:FX.water, icon:ICON.water, children:[
       { key:'water.site', label:'Sites',     icon:ICON.water, color:FX.water, layer:sub['water.site'] },
       { key:'water.pipe', label:'Pipelines', icon:ICON.pipe,  color:FX.water, layer:sub['water.pipe'] } ] },
@@ -1321,7 +1344,7 @@ new LeafLayerDeck({
   groups: GROUPS,
   leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
   lvNetwork,
-  gasMains: gasNetwork,      // gates the pressure legend on the Mains toggle
+  gasMains: gasPressureLayers,   // gates the pressure legend on any tier being on
   onCapacity: setLvCapacity,
   onHvLabels: setHvLabels,
   onPressure: setGasPressure,
