@@ -22,6 +22,7 @@ gas_pipes_merged.geojson
 local/*
 !local/README.md
 !local/manifest.example.json
+!local/mvf.config.example.json
 # Raw Overpass dumps for the extra-infrastructure build (extra_infra.geojson IS committed)
 osm_pipelines.json
 osm_industrial.json

@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"606925878","spec":"3\" ST","diameter_mm":76,"material":"ST","surveyed":"20260604"},"geometry":{"type":"LineString","coordinates":[[-3.048789,53.572728],[-3.048773,53.57271],[-3.04871,53.572731],[-3.048702,53.572723]]},"id":8031}]}

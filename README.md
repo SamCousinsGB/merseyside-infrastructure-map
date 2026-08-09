@@ -201,6 +201,41 @@ It counts each dataset before exporting and **exits non-zero if either export
 comes back short of its own reported count**, so a truncated download can't be
 committed as if it were complete.
 
+### MAPS Viewer pressure tiers
+`tiles/mapsgeo/` holds the pressure-coded gas network extracted from MAPS Viewer
+`.mvf` tiles. This is the layer that carries the **full pressure split**,
+including `Local` vs `National` high pressure, which the open Cadent data does
+not distinguish. Rebuild:
+
+```bash
+node build_maps_mvf.mjs --src="C:/path/to/MapsViewerJuly2026"
+```
+
+or put the path in `local/mvf.config.json` (git-ignored, since it is
+machine-specific) and just run `node build_maps_mvf.mjs`. Options: `--bbox=minE,minN,maxE,maxN`
+in EPSG:27700 (default is Merseyside), `--all` for the whole disc.
+
+A `.mvf` tile is a binary WebCGM metafile behind a light byte obfuscation
+(`plain[i] = ~raw[i^1]`) over a variable-length header; the picture body after it
+is plain CGM. `build_maps_mvf.mjs` documents the format in full. What it recovers
+per pipe: pressure tier (from the CGM layer name), diameter and material (from
+the ScreenTip — `125MM PE (IN 6" CI)` is 125 mm polyethylene inserted into a 6"
+cast iron main), asset id, and the tile's survey date. Valves, governors and
+syphons come out as points.
+
+Each tile declares its own EPSG:27700 extent, so georeferencing needs no external
+index; coordinates are converted to WGS84 with a Helmert datum shift. That is
+nominally ~5 m (no OSTN15 grid), but measured against the independent Cadent open
+data over central Liverpool the median disagreement is **0.3 m**, p90 0.6 m.
+Fine for an overlay — **not survey grade, and not a substitute for a LineSearch
+enquiry before anyone digs.**
+
+Dense tiers are written as tile trees rather than single files (456k LP features
+is not a fetch a browser survives) on a **per-tier grid** — LP on z16, MP on z15,
+which caps the worst tile at 154 KB instead of 1.5 MB. `tiles/mapsgeo/meta.json`
+tells the map which tiers exist, how they are stored and what zoom each starts
+at; adding a tier needs no change to `index.html`.
+
 ### Source data
 - `spen_complete_revert.geojson`, `current_power.geojson` — `power=*` features
 - `merseyrail_rail.json` — `railway=rail` + `electrified=rail` (raw Overpass)
@@ -225,16 +260,23 @@ published. Everything under `local/` is git-ignored (except its README and an
 example manifest), so it cannot reach the public GitHub Pages deploy — there the
 manifest simply 404s and no local layer is added, not even a toggle.
 
-This is the place for data you are licensed to *view* but not to *republish*
-(for example intermediate/high-pressure asset data). Copy
-`local/manifest.example.json` to `local/manifest.json`, drop your WGS84 GeoJSON
-files in `local/`, list them, and serve the map locally. See
-[`local/README.md`](local/README.md) for the manifest format.
+This is for data you are licensed to *view* but not to *republish*. Note that
+the MAPS Viewer pressure tiers are **not** here — they are committed under
+`tiles/mapsgeo/` and load like any other layer. `local/` is for anything you
+want kept out of the repo entirely.
 
-The map only renders files you place there — it does not fetch, decrypt or
-convert anything. Producing the GeoJSON from whatever source you are entitled to
-use is up to you and stays on your machine; if a dataset's licence forbids
-publication, keeping it in `local/` guarantees it never is.
+Drop WGS84 GeoJSON into `local/source/` and run `node build_gas_local.mjs` (or
+double-click `setup.bat`); it classifies by pressure and emits colour-coded
+layers, tiling any too big to fetch whole. Or hand-write `local/manifest.json`
+from `local/manifest.example.json`. Both use the same layer format the committed
+`tiles/mapsgeo/meta.json` does, so a tier can move between them without a code
+change. See [`local/README.md`](local/README.md) for the format.
+
+Nothing here downloads anything. If a dataset's licence forbids publication,
+keeping it in `local/` guarantees this repo never carries it — but that is a
+technical guarantee about the *repo*, not a licence to hold or share the data,
+and it is only as good as the choice to put the data there rather than in
+`tiles/`.
 
 ## Notes & caveats
 - **Sewers are not mapped** — they are essentially absent from OpenStreetMap

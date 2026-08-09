@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to local/mvf.config.json (git-ignored) and edit. Only 'source' is required.",
+
+  "source": "C:/path/to/MapsViewerJuly2026",
+
+  "_bbox": "EPSG:27700 [minE, minN, maxE, maxN]. Omit for the Merseyside default; pass --all on the command line for the whole disc.",
+  "bbox": [320000, 377000, 357000, 422000],
+
+  "_plant": "false to skip valves/governors/syphons and extract mains only.",
+  "plant": true
+}

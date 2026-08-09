@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"312996554","spec":"4\" CI","diameter_mm":102,"material":"CI","surveyed":"20260604"},"geometry":{"type":"LineString","coordinates":[[-3.154461,53.393678],[-3.153413,53.393083],[-3.152943,53.393493]]},"id":113617}]}

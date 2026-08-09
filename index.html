@@ -404,14 +404,18 @@ lvNetwork.on('remove',()=>{ lvTx.clearLayers(); lvTxKey=null; if(lvCableLayer)lv
 // would not draw until z17, and either layer can be gated independently.
 // GPI Open covers the low/medium-pressure network only. Cadent's higher-pressure
 // (IP/HP) network is a "Shared" dataset needing a data sharing agreement, so it
-// is deliberately not used here.
+// is deliberately not fetched here. The styling below still handles IP and HP,
+// because the local-only overlay (see local/README.md) can supply them from a
+// source you are separately entitled to use, and they must not fall through to
+// the LP colour when it does.
 // Unlike the OSM layers these are drawn solid rather than dashed even though the
 // network is almost entirely buried - the same call the LV cables make, because
 // a whole dense street-level layer in dashes is unreadable. Each popup says
 // which side of the ground the pipe is on.
 // The value dictionaries are Cadent's own, from the dataset's data catalogue.
 const GAS_PRESS={LP:'Low pressure (&le;75 mbarg)',MP:'Medium pressure (&gt;75 mbarg, &le;2 barg)',
-                 IP:'Intermediate pressure (&gt;2, &le;7 barg)',HP:'High pressure (&gt;7 barg)'};
+                 IP:'Intermediate pressure (&gt;2, &le;7 barg)',HP:'High pressure (&gt;7 barg)',
+                 HPL:'Local high pressure (&gt;7 barg)',HPN:'National high pressure (&gt;7 barg)'};
 const GAS_MAT={CI:'Cast iron',DI:'Ductile iron',PE:'Polyethylene',SI:'Spun iron',ST:'Steel',
                AS:'Asbestos',CO:'Copper',LE:'Lead',PV:'PVC',FP:'Flexible polyethylene',
                GL:'Galvanised',UN:'Unknown'};
@@ -426,7 +430,20 @@ const GAS_MAIN_MINZOOM=14, GAS_SVC_MINZOOM=17;
 // services can still be told apart. Both mains and services carry a real LP/MP
 // split (in this region 150k/7.4k mains, 10.9k/2.1k services), so the toggle is
 // worth having on both rather than mains alone.
-const GAS_COL={LP:'#E8730C',MP:'#9A3412'};     // by pressure tier
+// One canonical pressure scale, darker and heavier as pressure rises. These
+// hexes are shared with build_gas_local.mjs (TIERS) and MUST stay in step with
+// it: a local overlay's HP/IP layers and this layer's pipes are drawn on the
+// same map, so a colour that means two different tiers is worse than no colour
+// at all. Previously #9A3412 meant MP here and IP there.
+// HPN/HPL split the old single HP tier: a MAPS Viewer extract distinguishes the
+// National (NTS/LTS transmission) high-pressure network from the Local one, and
+// those are very different things to have under a street. HP stays for sources
+// that only say "high pressure" - it keeps its historic hex so nothing already
+// exported silently changes meaning.
+const GAS_COL={HPN:'#3B0D0D',HPL:'#7A2222',HP:'#5A1A1A',IP:'#9A3412',MP:'#B4530A',LP:'#E8730C',UN:'#9AA0A6'};
+// Line weight also carries tier, so the scale survives greyscale printing and
+// stays legible for anyone who cannot separate the reds.
+const GAS_WT={HPN:3.8,HPL:3.4,HP:3.4,IP:3,MP:2.6,LP:1.8,UN:1.6};
 const GAS_PLAIN='#E8730C';                      // mains, pressure colouring off
 const GAS_SVC_COL='#F2B279';                    // service pipes / risers, pressure colouring off
 const isGasSvc=p=>p.t==='s'||p.t==='r';
@@ -434,7 +451,7 @@ let gasByPressure=true;                         // toggle state (default on)
 const gasRestyle=[];                            // per-layer restyle hooks
 function gasStyle(f){const p=f.properties, svc=isGasSvc(p);
   const col = gasByPressure ? (GAS_COL[p.p]||GAS_PLAIN) : (svc?GAS_SVC_COL:GAS_PLAIN);
-  return{color:col, weight: svc?1:(p.p==='MP'?2.6:1.8), opacity: svc?.85:.9};}
+  return{color:col, weight: svc?1:(GAS_WT[p.p]||1.8), opacity: svc?.85:.9};}
 function setGasPressure(on){ gasByPressure=on; for(const r of gasRestyle) r(); }
 function gasPopup(e,p){
   const u=GAS_DU[p.du]!==undefined?GAS_DU[p.du]:'';
@@ -580,41 +597,134 @@ const gasTrans=lazyGeoJSON('gas_transmission.geojson',{
 // from the MAPS Viewer): it lives on your machine, drawn by the map, and cannot
 // leak into git. Populating local/ is the user's responsibility; nothing about
 // its contents is committed. See local/README.md for the manifest format.
-async function loadLocalLayers(){
+const LOCAL_PRESS={HPN:'National high pressure (&gt;7 barg)',HPL:'Local high pressure (&gt;7 barg)',
+                   HP:'High pressure (&gt;7 barg)',IP:'Intermediate (&gt;2, &le;7 barg)',
+                   MP:'Medium (&gt;75 mbarg, &le;2 barg)',LP:'Low (&le;75 mbarg)',UN:'Unknown pressure'};
+const LOCAL_KNOWN=['pressure','spec','diameter_mm','material','inserted_into','asset_id','surveyed','kind'];
+// Popups lead with the fields a pressure-tier export actually carries, then fall
+// back to listing whatever else the source put on the feature, so a manifest
+// layer from some other export is still fully readable.
+function localPopup(spec,f,ll,note){
+  const p=f.properties||{}, rows=[];
+  const add=(k,v)=>{ if(v!==undefined&&v!==null&&v!=='') rows.push(`<tr><td class="k">${k}</td><td>${v}</td></tr>`); };
+  add('pressure',LOCAL_PRESS[p.pressure]||p.pressure);
+  add('spec',p.spec);
+  add('diameter',p.diameter_mm!=null?p.diameter_mm+'&nbsp;mm':null);
+  add('material',GAS_MAT[p.material]||p.material);
+  add('inserted into',p.inserted_into);
+  add('asset id',p.asset_id);
+  add('surveyed',p.surveyed?String(p.surveyed).replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3'):null);
+  for(const [k,v] of Object.entries(p)) if(!LOCAL_KNOWN.includes(k)) add(k,String(v));
+  L.popup({className:'tt'}).setLatLng(ll).setContent(
+    `<div class="pt">${p.kind==='plant'?'Gas plant':'Gas main'}</div>`
+    +`<div class="pm">${spec.label||'Gas layer'}${note?' &middot; '+note:''}</div>`
+    +`<table>${rows.join('')}</table>`+gmaps(ll.lat,ll.lng)).openOn(map);
+}
+
+// Tiled local layers. A whole-file fetch stops being viable long before half a
+// million features, so build_gas_local.mjs writes any big layer as a sparse tile
+// tree and says so in the manifest (tiles/grid/minzoom). This is the same
+// viewport-windowed pattern as the gas and LV tile trees; the grid zoom is
+// per-layer because a dense LP tier needs finer tiles than an HP one.
+const localRenders=[];   // moveend hooks, one per tiled local layer
+const localGated=[];     // {layer,minzoom,label} - feeds the zoom hint
+const localTiers=new Set();  // pressure tiers an overlay supplies; drives the legend
+// `base` is the directory the manifest's paths are relative to, so the same
+// renderer serves the committed MAPS tiers (tiles/mapsgeo/) and any private
+// overlay (local/) without either knowing about the other.
+function localTileLayer(spec,style,base,note){
+  const group=L.layerGroup();
+  const grid=spec.grid||14, minz=spec.minzoom||14, cache=new Map(), MAXC=140;
+  let gj=null, sig=null, token=0;
+  async function tile(x,y){
+    const k=x+'/'+y;
+    if(cache.has(k)){const v=cache.get(k);cache.delete(k);cache.set(k,v);return v;}
+    let fc={features:[]};
+    try{const r=await fetch(base+spec.tiles+'/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
+    cache.set(k,fc);
+    while(cache.size>MAXC)cache.delete(cache.keys().next().value);
+    return fc;
+  }
+  async function render(){
+    if(!map.hasLayer(group)||map.getZoom()<minz){ if(gj)gj.clearLayers(); sig=null; return; }
+    const t=++token, b=map.getBounds().pad(0.2);
+    const x0=lvLon2x(b.getWest(),grid),x1=lvLon2x(b.getEast(),grid),
+          y0=lvLat2y(b.getNorth(),grid),y1=lvLat2y(b.getSouth(),grid);
+    // as with the LV cables, the drawn set is fully determined by the tile
+    // window: same window => nothing to redraw.
+    const s=x0+':'+x1+':'+y0+':'+y1;
+    if(s===sig&&gj&&gj.getLayers().length) return;
+    sig=s;
+    const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(tile(x,y));
+    const fcs=await Promise.all(reqs);
+    if(t!==token) return;                      // a newer render superseded this one
+    const seen=new Set(), feats=[];
+    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
+    if(!gj){
+      gj=L.geoJSON(null,{style,
+        pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:3,color:'#fff',weight:1,fillColor:style(f).color,fillOpacity:.95}),
+        onEachFeature:(f,l)=>l.on('click',e=>localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),note))});
+      group.addLayer(gj);
+    }
+    gj.clearLayers();
+    gj.addData({type:'FeatureCollection',features:feats});
+  }
+  localRenders.push(render);
+  localGated.push({layer:group,minzoom:minz,label:spec.label||'gas layer'});
+  group.on('add',()=>{render();updateLvHint();});
+  group.on('remove',()=>{if(gj)gj.clearLayers();sig=null;updateLvHint();});
+  return group;
+}
+function syncLocal(){ for(const r of localRenders) r(); }
+
+// One builder for a manifest of pressure-tier layers, used twice:
+//   tiles/mapsgeo/meta.json - the committed MAPS extract, always present, loads
+//                             like every other layer with no setup step
+//   local/manifest.json     - an optional private overlay, only ever on a local
+//                             checkout (see the note above loadLocalLayers)
+// Both describe a layer the same way, so a tier can move between them without a
+// code change here.
+async function loadTierLayers(base, manifestUrl, opts){
+  const {suffix='', note=null, keyPrefix=''} = opts||{};
   let man;
   try{
-    const r = await fetch('local/manifest.json', {cache:'no-store'});
-    if(!r.ok) return [];                       // the normal case on the public deploy
+    const r = await fetch(manifestUrl, {cache:'no-store'});
+    if(!r.ok) return [];
     man = await r.json();
   }catch(e){ return []; }                      // absent / malformed -> silently none
   const out = [];
   for(const spec of (man.layers||[])){
-    if(!spec || !spec.file) continue;
+    if(!spec || (!spec.file && !spec.tiles)) continue;
+    const t = spec.tier || (/^(?:gas|maps)-([a-z]+)$/.exec(spec.id||'')||[])[1];
+    if(t) localTiers.add(String(t).toUpperCase());
     const color  = spec.color || GAS_TRANS_COL;
     const weight = spec.weight || 3;
     const dash   = spec.dash ? '8 5' : null;
-    const layer = lazyGeoJSON('local/'+spec.file, {
-      style: f => ({color, weight, opacity:.95,
-                    dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)}),
-      pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:5,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
-      onEachFeature: (f,l)=>l.on('click',e=>{
-        const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
-        const rows=Object.entries(f.properties||{}).slice(0,14)
-          .map(([k,v])=>`<tr><td class="k">${k}</td><td>${String(v)}</td></tr>`).join('');
-        L.popup({className:'tt'}).setLatLng(ll).setContent(
-          `<div class="pt">${spec.label||'Local layer'}</div>`
-          +`<div class="pm">Local only &middot; not published</div>`
-          +`<table>${rows}</table>`+gmaps(ll.lat,ll.lng)).openOn(map);})
-    });
-    out.push({ group: spec.group||'gas', key:'local.'+(spec.id||spec.file),
-               label:(spec.label||spec.file)+' · local', icon:ICON.pipe, color, layer });
+    const style  = f => ({color, weight, opacity:.95,
+                          dashArray: dash || ((f.properties&&f.properties.ug) ? '8 5' : null)});
+    const layer = spec.tiles
+      ? localTileLayer(spec, style, base, note)
+      : lazyGeoJSON(base+spec.file, {
+          style,
+          pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:4,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
+          onEachFeature: (f,l)=>l.on('click',e=>
+            localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),note))
+        });
+    out.push({ group: spec.group||'gas', key:keyPrefix+(spec.id||spec.file||spec.tiles),
+               label:(spec.label||spec.file||spec.tiles)+suffix, icon:ICON.pipe, color, layer });
   }
   return out;
 }
+// The MAPS Viewer extract: committed under tiles/mapsgeo/, rebuilt by
+// build_maps_mvf.mjs. Pressure tier, diameter, material and plant all come
+// straight from the source tiles.
+const loadMapsLayers  = () => loadTierLayers('tiles/mapsgeo/','tiles/mapsgeo/meta.json',{keyPrefix:'maps.'});
+const loadLocalLayers = () => loadTierLayers('local/','local/manifest.json',
+                                {suffix:' · local', note:'local only, not published', keyPrefix:'local.'});
 
 // one debounced dispatcher for ALL moveend work: collapses wheel-zoom / inertial-pan
 // bursts into a single rebuild (each render's token guard drops any straggler).
-let _mvT; function onMoveEnd(){ clearTimeout(_mvT); _mvT=setTimeout(()=>{ syncLv(); syncGas(); if(hvLabelsOn) buildHvLabels(); }, 150); }
+let _mvT; function onMoveEnd(){ clearTimeout(_mvT); _mvT=setTimeout(()=>{ syncLv(); syncGas(); syncLocal(); if(hvLabelsOn) buildHvLabels(); }, 150); }
 map.on('moveend', onMoveEnd);
 // The LV and gas networks only draw when zoomed in; tell the user so they don't
 // look broken when toggled on from a wide view.
@@ -624,6 +734,9 @@ function hintText(){
   const z=map.getZoom(), want=[];
   if(map.hasLayer(lvNetwork)&&z<14) want.push('LV network');
   if(map.hasLayer(gasMains)&&z<GAS_MAIN_MINZOOM) want.push('gas network');
+  // Tiled local layers are zoom-gated too, and each tier at its own zoom - say
+  // which one is waiting rather than leaving a switched-on layer looking broken.
+  for(const g of localGated) if(map.hasLayer(g.layer)&&z<g.minzoom) want.push(g.label.replace(/\s*·.*$/,''));
   return want.length?('&#128269; Zoom in to see the '+want.join(' &amp; ')):'';
 }
 lvHint.onAdd=()=>{lvHintEl=L.DomUtil.create('div','lvhint');lvHintEl.innerHTML=hintText();return lvHintEl;};
@@ -958,6 +1071,11 @@ const LeafLayerDeck = L.Control.extend({
           <div class="fx-rag-rows">
             <span><i style="background:${GAS_COL.LP}"></i>Low &le;75 mbarg</span>
             <span><i style="background:${GAS_COL.MP}"></i>Medium &le;2 barg</span>
+            <span><i style="background:${GAS_COL.IP}"></i>Intermediate &le;7 barg</span>
+            ${(localTiers.has('HPL')||localTiers.has('HPN'))
+              ? `<span><i style="background:${GAS_COL.HPL}"></i>High &gt;7 barg &middot; local</span>
+                 <span><i style="background:${GAS_COL.HPN}"></i>High &gt;7 barg &middot; national</span>`
+              : `<span><i style="background:${GAS_COL.HP}"></i>High &gt;7 barg</span>`}
           </div>
         </div>
       </div>`;
@@ -1024,9 +1142,10 @@ const LeafLayerDeck = L.Control.extend({
 // ============================================================================
 async function initData(fc){
   data = fc;
-  // load any local-only overlays first, so they can be folded into the deck
-  // before it mounts (absent on the public deploy -> empty array -> no change)
-  const localLayers = await loadLocalLayers();
+  // load the committed MAPS pressure tiers plus any private overlay first, so
+  // both can be folded into the deck before it mounts. Either fetch that 404s
+  // degrades to an empty array and simply contributes no layers.
+  const localLayers = [...await loadMapsLayers(), ...await loadLocalLayers()];
 
   // bbox-midpoint of any geometry, without allocating a throwaway L.geoJSON layer
   // (identical result to L.geoJSON(f).getBounds().getCenter()).

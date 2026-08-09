@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"main","asset_id":"220003034600","spec":"125MM PE (IN 8\" SI)","inserted_into":"8\" SI","diameter_mm":125,"material":"PE","surveyed":"20260604"},"geometry":{"type":"LineString","coordinates":[[-2.890307,53.481572],[-2.888973,53.481244]]},"id":369411}]}

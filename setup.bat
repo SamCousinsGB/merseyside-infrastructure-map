@@ -2,9 +2,10 @@
 REM ============================================================================
 REM  setup.bat - one double-click to view the colour-coded gas map LOCALLY.
 REM
-REM  It (1) builds colour-by-pressure layers (HP/IP/MP/LP) from whatever GeoJSON
-REM  you have put in local\source\, then (2) serves the map on your machine and
-REM  opens it in your browser.
+REM  It (1) extracts MAPS Viewer .mvf tiles to GeoJSON, if local\mvf.config.json
+REM  points at a copy, (2) builds colour-by-pressure layers (HP/IP/MP/LP) from
+REM  whatever is then in local\source\, and (3) serves the map on your machine
+REM  and opens it in your browser.
 REM
 REM  Everything it writes stays under local\, which is git-ignored - so nothing
 REM  here is ever committed or published. This is a LOCAL viewer, not a
@@ -17,6 +18,11 @@ cd /d "%~dp0"
 
 where node >nul 2>nul || (echo [x] Node.js not found on PATH. Install it, then re-run. & pause & exit /b 1)
 where python >nul 2>nul || (echo [x] Python not found on PATH. Install it, then re-run. & pause & exit /b 1)
+
+echo.
+echo === Extracting MAPS Viewer tiles (skipped if not configured) ===
+node build_maps_mvf.mjs
+if errorlevel 1 (echo [x] MVF extraction failed. & pause & exit /b 1)
 
 echo.
 echo === Building local colour-coded gas layers ===
