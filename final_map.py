@@ -624,12 +624,20 @@ const GAS_TYPE={m:'Gas main',s:'Gas service pipe',r:'Gas riser',
 const GAS_DU={MM:'mm',I:'in',UN:''};
 const GAS_GRID=14, GAS_MAXCACHE=80;
 const GAS_MAIN_MINZOOM=14, GAS_SVC_MINZOOM=17;
-const GAS_COL={LP:'#E8730C',MP:'#B4530A'};     // mains, darker as pressure rises
-const GAS_SVC_COL='#F2B279';                    // service pipes / risers
+// Colour encodes PRESSURE TIER, weight encodes pipe type. The "Colour pipes by
+// pressure" toggle in the Gas drawer mirrors the LV capacity control: on by
+// default; switched off, pipes fall back to one colour per type so mains and
+// services can still be told apart. Both carry a real LP/MP split.
+const GAS_COL={LP:'#E8730C',MP:'#9A3412'};     // by pressure tier
+const GAS_PLAIN='#E8730C';                      // mains, pressure colouring off
+const GAS_SVC_COL='#F2B279';                    // services, pressure colouring off
 const isGasSvc=p=>p.t==='s'||p.t==='r';
-function gasStyle(f){const p=f.properties;
-  if(isGasSvc(p)) return{color:GAS_SVC_COL,weight:1,opacity:.85};
-  return{color:GAS_COL[p.p]||GAS_COL.LP,weight:p.p==='MP'?2.6:1.8,opacity:.9};}
+let gasByPressure=true;                         // toggle state (default on)
+const gasRestyle=[];                            // per-layer restyle hooks
+function gasStyle(f){const p=f.properties, svc=isGasSvc(p);
+  const col = gasByPressure ? (GAS_COL[p.p]||GAS_PLAIN) : (svc?GAS_SVC_COL:GAS_PLAIN);
+  return{color:col, weight: svc?1:(p.p==='MP'?2.6:1.8), opacity: svc?.85:.9};}
+function setGasPressure(on){ gasByPressure=on; for(const r of gasRestyle) r(); }
 function gasPopup(e,p){
   const u=GAS_DU[p.du]!==undefined?GAS_DU[p.du]:'';
   const dia=(p.d!=null&&p.d>0)?(p.d+(u?'&nbsp;'+u:'')):'-';
@@ -677,6 +685,7 @@ function gasTileLayer(dir,minzoom){
     layer.clearLayers();
     layer.addData({type:'FeatureCollection',features:feats});
   }
+  gasRestyle.push(()=>{ if(layer) layer.setStyle(gasStyle); });
   group.on('add',()=>{render();updateLvHint();});
   group.on('remove',()=>{if(layer)layer.clearLayers();updateLvHint();});
   map.on('moveend',render);
@@ -964,7 +973,10 @@ const LeafLayerDeck = L.Control.extend({
       else if (on>0)             parent.classList.add('partial');
       // power group only: LV RAG legend visible while LV child is on
       const legend = group.querySelector('[data-rag]');
-      if (legend) legend.classList.toggle('is-on', m.hasLayer(cfg.lvNetwork));
+      if (legend) {
+        const gate = g.key === 'gas' ? cfg.gasMains : cfg.lvNetwork;
+        legend.classList.toggle('is-on', !!gate && m.hasLayer(gate));
+      }
       reflow();
     };
 
@@ -998,6 +1010,17 @@ const LeafLayerDeck = L.Control.extend({
       cfg.onHvLabels && cfg.onHvLabels(on);
       reflow();
     });
+    // Gas pressure-tier toggle: same shape as the LV capacity switch below
+    const presstog = group.querySelector('[data-presstog]');
+    if (presstog) L.DomEvent.on(presstog, 'click', (e) => {
+      L.DomEvent.stop(e);
+      const on = !presstog.classList.contains('on');
+      presstog.classList.toggle('on', on);
+      const legend = group.querySelector('[data-rag]');
+      if (legend) legend.classList.toggle('cap-on', on);
+      cfg.onPressure && cfg.onPressure(on);
+      reflow();
+    });
     // LV capacity toggle (inside .fx-rag; unchanged behaviour)
     const captog = group.querySelector('[data-captog]');
     if (captog) L.DomEvent.on(captog, 'click', (e) => {
@@ -1027,6 +1050,16 @@ const LeafLayerDeck = L.Control.extend({
   // per-group extras HTML (power only). HV-labels toggle is rendered BEFORE the
   // .fx-rag block so it stays visible regardless of LV state.
   _extrasHtml:function(g){
+    if (g.key === 'gas') return `
+      <div class="fx-rag cap-on" data-rag>
+        <button class="fx-cap on" data-presstog><span class="fx-cap-sw"></span>Colour pipes by pressure</button>
+        <div class="fx-rag-legend">
+          <div class="fx-rag-rows">
+            <span><i style="background:${GAS_COL.LP}"></i>Low &le;75 mbarg</span>
+            <span><i style="background:${GAS_COL.MP}"></i>Medium &le;2 barg</span>
+          </div>
+        </div>
+      </div>`;
     if (g.key !== 'power') return '';
     return `
       <button class="fx-cap fx-labtog on" data-labtog><span class="fx-cap-sw"></span>HV labels (kV / MW)</button>
@@ -1108,8 +1141,10 @@ new LeafLayerDeck({
   groups: GROUPS,
   leaves: [ { key:'train', label:'Trains', icon:ICON.train, color:FX.train, layer:layers.train } ],
   lvNetwork,
+  gasMains,
   onCapacity: setLvCapacity,
   onHvLabels: setHvLabels,
+  onPressure: setGasPressure,
 }).addTo(map);
 
 

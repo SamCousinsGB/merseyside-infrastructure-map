@@ -46,10 +46,15 @@ capacity, or a cable for its type, voltage and capacity.
 
 The **gas mains and service pipes** are Cadent's real distribution network (not
 OSM), served from committed tiles the same way as the LV cables. **Mains** appear
-from **zoom 14** and are shaded by pressure tier (medium pressure darker and
-thicker than low pressure); **service pipes** — the last-mile connections into
-individual premises — only appear from **zoom 17**, since they are street-level
-clutter at any wider view. Click a pipe for its pressure tier, material,
+from **zoom 14**; **service pipes** — the last-mile connections into individual
+premises — only appear from **zoom 17**, since they are street-level clutter at
+any wider view.
+
+Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; dark red =
+medium, ≤2 barg), with a legend in the Gas drawer — the same treatment the LV
+cables get for capacity. Switch **"Colour pipes by pressure"** off to fall back
+to one colour per pipe type. Colour encodes pressure, line weight encodes type,
+so the two read independently. Click a pipe for its pressure tier, material,
 diameter, install year and whether it is above or below ground.
 
 **Above-ground sites** (1,360 in region) and **above-ground pipes** (266) come
@@ -207,6 +212,15 @@ committed as if it were complete.
   only**: Cadent publish them explicitly *not* for digging purposes, and this map
   rounds coordinates to ~1 m when building tiles. Never dig against them; use
   [LSBUD](https://lsbud.co.uk/).
+- **On apparent misalignment against satellite imagery.** Pipes sometimes look
+  offset from the aerial basemap. Measured against OSM road centrelines over
+  1,103 sampled vertices in Liverpool, the systematic shift is **1.48 m** against
+  a random scatter of **±7.5 m** — i.e. there is no meaningful datum or
+  projection error in the data. Median distance from a road centreline is
+  **4.7 m**, which is simply where mains are: under the carriageway or footway.
+  Apparent offsets against aerial imagery are dominated by the imagery's own
+  registration error, not by the pipe data. This rules out a *systematic*
+  problem; it cannot vouch for any individual pipe.
 - Cadent gas pipes are drawn **solid, not dashed**, despite being almost entirely
   buried — the same exception the LV cables make, because a dense street-level
   layer rendered in dashes is unreadable. Each popup states whether the pipe is
