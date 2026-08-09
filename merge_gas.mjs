@@ -26,16 +26,41 @@ const OUT = process.argv[3] || "gas_pipes_merged.geojson";
 console.log(`reading ${IN} ...`);
 const fc = JSON.parse(fs.readFileSync(IN, "utf8"));
 
+// Coordinates are rounded to 5 dp (~1 m) at fetch time, which is inside the
+// source's own 1 m BNG resolution but CAN collapse two distinct vertices onto
+// the same point. Strip those before chaining: a repeated vertex draws
+// identically but costs tile bytes, and a segment whose two ends collapse to one
+// point is a zero-length ghost - invisible, yet still hit-tested on click and
+// still able to confuse the endpoint chaining below, since its start and end
+// would hash to the same key.
+const dedupe = (c) => {
+  const out = [c[0]];
+  for (let i = 1; i < c.length; i++) {
+    const p = c[i], q = out[out.length - 1];
+    if (p[0] !== q[0] || p[1] !== q[1]) out.push(p);
+  }
+  return out;
+};
+
 // explode MultiLineString -> LineString so chaining sees flat geometry
 const F = [];
+let dropped = 0, collapsed = 0;
+const take = (props, coords) => {
+  if (!coords || coords.length < 2) { dropped++; return; }
+  const d = dedupe(coords);
+  collapsed += coords.length - d.length;
+  if (d.length < 2) { dropped++; return; }
+  F.push({ p: props, c: d });
+};
 for (const f of fc.features) {
   const g = f.geometry;
   if (!g) continue;
-  if (g.type === "LineString") F.push({ p: f.properties || {}, c: g.coordinates });
+  if (g.type === "LineString") take(f.properties || {}, g.coordinates);
   else if (g.type === "MultiLineString")
-    for (const part of g.coordinates) F.push({ p: f.properties || {}, c: part });
+    for (const part of g.coordinates) take(f.properties || {}, part);
 }
 console.log(`  ${fc.features.length} records -> ${F.length} linestrings`);
+console.log(`  collapsed ${collapsed} duplicate vertices, dropped ${dropped} zero-length`);
 
 const epKey = (c) => c[0].toFixed(5) + "," + c[1].toFixed(5);
 const bucketKey = (p) =>
@@ -97,6 +122,12 @@ for (const [k, idxs] of buckets) {
     extend(true);
     extend(false);
 
+    // chaining appends nc[1..] so it cannot introduce a duplicate at a join, but
+    // re-check rather than trust that: a ghost feature in the tiles is invisible
+    // and therefore expensive to notice later
+    const clean = dedupe(coords);
+    if (clean.length < 2) continue;
+
     out.push({
       type: "Feature",
       id: id++,
@@ -109,7 +140,7 @@ for (const [k, idxs] of buckets) {
         ag: Number(ag),
         yr,
       },
-      geometry: { type: "LineString", coordinates: coords },
+      geometry: { type: "LineString", coordinates: clean },
     });
   }
 }
