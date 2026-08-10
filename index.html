@@ -584,8 +584,15 @@ const gasAgSitesCadent=lazyGeoJSON('gas_ag_sites.geojson',{
 // half the MAPS set overlaps, and two markers on one governor was the worst of
 // the duplication. Where MAPS found the compound footprint the site draws as its
 // actual outline; where it only has the label, a ring.
+//
+// EXCEPT when MAPS surveyed the footprint. Cadent's record is only ever a point,
+// so dropping the whole MAPS feature on overlap also threw away the outline and
+// left a bare dot with no extent - 103 of the 198 surveyed outlines never drew.
+// The duplication this guards against is two *markers*; an outline with Cadent's
+// dot inside it is not that, it is the site plus its extent. So only a
+// label-only MAPS point is a true duplicate worth suppressing.
 const gasAgSitesMaps=lazyGeoJSON('tiles/mapsgeo/agi.geojson',{
-  filter:f=>!(f.properties&&f.properties.also_in_cadent),
+  filter:f=>{const p=f.properties||{}; return p.bounded||!p.also_in_cadent;},
   style:{color:GAS_AG_COL,weight:2,fillColor:GAS_AG_COL,fillOpacity:.18},
   pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:5.5,color:GAS_AG_COL,weight:2.5,fillColor:'#fff',fillOpacity:.95}),
   onEachFeature:(f,l)=>{
