@@ -546,7 +546,7 @@ function parseTile(file, opts) {
   let layerId = null, layerName = null, tier = null;
   let gr = null; // current grobject
   const features = [];
-  const agi = [];
+  const agi = [], agiRaw = [], rings = [];
   let pipes = 0, plant = 0;
   const toLL = (vx, vy) => osgbToWgs84(minE + (vx - vx0) * sx, minN + (vy - vy0) * sy);
 
@@ -596,8 +596,19 @@ function parseTile(file, opts) {
         }
         break;
       }
-      case "4/1":   // POLYLINE
+      // Closed rings on the OS background layer are site footprints - the kiosk
+      // or compound an installation occupies. Kept in VDC so an AGI label can be
+      // matched against them once the whole tile has been read.
+      case "4/7":   // POLYGON
+      case "4/11": { // RECTANGLE
+        if (layerId !== 1000) break;
+        const ring = ringOf(e);
+        if (ring) rings.push(ring);
+        break;
+      }
+      case "4/1":   // POLYLINE - pipes on the gas layers, outlines on the OS one
       case "4/2": { // DISJOINT POLYLINE
+        if (layerId === 1000) { const ring = ringOf(e); if (ring) rings.push(ring); break; }
         if (!tier) break;
         const n = Math.floor(e.len / 4);
         if (n < 2) break;
@@ -627,28 +638,21 @@ function parseTile(file, opts) {
         if (!label) break;
         const at = textAnchor(e);
         if (!at || !vdcSane(at[0], at[1])) break;
-        agi.push({
-          type: "Feature",
-          properties: {
-            kind: "agi",
-            label,
-            note: layerId === 3000 ? "from drawing notes" : null,
-            surveyed: meta.Date || null,
-          },
-          geometry: { type: "Point", coordinates: toLL(at[0], at[1]) },
-        });
+        agiRaw.push({ label, at, notes: layerId === 3000 });
         break;
       }
       case "4/27": { // POLYSYMBOL - valves, governors, syphons and the like
         if (!tier || !opts.plant) break;
         // <symbol index:int16> then a run of VDC point pairs
+        const sym = e.data.readInt16BE(0);
         const n = Math.floor((e.len - 2) / 4);
         for (let i = 0; i < n; i++) {
           const vx = e.data.readInt16BE(2 + i * 4);
           const vy = e.data.readInt16BE(2 + i * 4 + 2);
           if (!vdcSane(vx, vy)) { rejected++; continue; }
-          const pt = toLL(vx, vy);
-          features.push(makeFeature("Point", pt, tier, gr, true, meta));
+          const f = makeFeature("Point", toLL(vx, vy), tier, gr, true, meta);
+          f.properties.symbol = sym;      // the drawn glyph; MAPS never names it
+          features.push(f);
           plant++;
         }
         break;
@@ -659,7 +663,134 @@ function parseTile(file, opts) {
   for (const e of elements(head, 0)) handle(e);
   if (bodyStart < raw.length) for (const e of elements(raw, bodyStart)) handle(e);
 
+  // Give each AGI label its footprint. A governor is often a kiosk of a few
+  // square metres - too small to letter - so the label is set BESIDE it rather
+  // than inside, and pure containment finds nothing (measured: 0 of 2 on a tile
+  // that plainly has both). So: prefer the smallest ring that does contain the
+  // label, else take the nearest ring centroid within ADJACENT_M. Rings outside
+  // MIN/MAX_SITE_M2 are rejected - below that is drawing furniture, above it is
+  // the building or block the site happens to stand near.
+  const areaM2 = (r) => r.area * Math.abs(sx * sy);
+  const centroid = (r) => {
+    let cx = 0, cy = 0;
+    for (const p of r.pts) { cx += p[0]; cy += p[1]; }
+    return [cx / r.pts.length, cy / r.pts.length];
+  };
+  const usable = rings.filter((r) => {
+    const m2 = areaM2(r);
+    return m2 >= MIN_SITE_M2 && m2 <= MAX_SITE_M2;
+  });
+  for (const a of agiRaw) {
+    let best = null;
+    for (const r of usable) {
+      if (!pointInRing(a.at, r.pts)) continue;
+      if (!best || r.area < best.area) best = r;
+    }
+    if (!best) {
+      let bestD = Infinity;
+      for (const r of usable) {
+        const c = centroid(r);
+        const d = Math.hypot(c[0] - a.at[0], c[1] - a.at[1]) * Math.abs(sx);
+        if (d < bestD && d <= ADJACENT_M) { bestD = d; best = r; }
+      }
+    }
+    const props = {
+      kind: "agi",
+      label: a.label,
+      note: a.notes ? "from drawing notes" : null,
+      surveyed: meta.Date || null,
+    };
+    const centre = toLL(a.at[0], a.at[1]);
+    if (best) {
+      props.bounded = true;
+      agi.push({
+        type: "Feature",
+        properties: { ...props, centre },
+        geometry: { type: "Polygon", coordinates: [best.pts.map((p) => toLL(p[0], p[1]))] },
+      });
+    } else {
+      agi.push({ type: "Feature", properties: props, geometry: { type: "Point", coordinates: centre } });
+    }
+  }
+
   return { features, agi, pipes, plant, rejected, facet: meta.Facet || path.basename(file) };
+}
+
+// A closed run of VDC vertices, with its area, or null if it is not a ring.
+function ringOf(e) {
+  const n = Math.floor(e.len / 4);
+  if (n < 4 || n > 200) return null;
+  const pts = [];
+  for (let i = 0; i < n; i++) pts.push([e.data.readInt16BE(i * 4), e.data.readInt16BE(i * 4 + 2)]);
+  const a = pts[0], b = pts[n - 1];
+  const closed = Math.abs(a[0] - b[0]) < 4 && Math.abs(a[1] - b[1]) < 4;
+  if (!closed && !(e.cls === 4 && (e.id === 7 || e.id === 11))) return null;
+  let area = 0;
+  for (let i = 0, j = n - 1; i < n; j = i++) area += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
+  area = Math.abs(area / 2);
+  if (!area) return null;
+  return { pts, area };
+}
+
+// ---------------------------------------------------------------------------
+// Site helpers
+// ---------------------------------------------------------------------------
+const DUP_RADIUS_M = 30;   // same site, drawn by both sources
+const SITE_RADIUS_M = 30;  // plant standing at an installation
+const ADJACENT_M = 12;     // how far a site label may sit from its own footprint
+const MIN_SITE_M2 = 2;     // below this it is drawing furniture, not a structure
+const MAX_SITE_M2 = 4000;  // above this it is the building the site stands beside
+
+// A site may be a polygon (compound outline) or a bare point.
+const siteCentre = (f) =>
+  f.properties.centre || (f.geometry.type === "Point" ? f.geometry.coordinates : f.geometry.coordinates[0][0]);
+
+function readCadentSites() {
+  try {
+    const fc = JSON.parse(fs.readFileSync("gas_ag_sites.geojson", "utf8"));
+    return (fc.features || []).filter((f) => f.geometry && f.geometry.type === "Point").map((f) => f.geometry.coordinates);
+  } catch {
+    return []; // absent is fine - nothing gets flagged
+  }
+}
+
+const M_PER_DEG_LAT = 111320;
+const CELL_DEG = 0.004; // ~300 m, comfortably over both radii
+function spatialIndex(points) {
+  const g = new Map();
+  for (const p of points) {
+    const k = Math.floor(p[0] / CELL_DEG) + ":" + Math.floor(p[1] / CELL_DEG);
+    let a = g.get(k);
+    if (!a) g.set(k, (a = []));
+    a.push(p);
+  }
+  return g;
+}
+function nearestMetres(grid, c) {
+  const mLon = M_PER_DEG_LAT * Math.cos((c[1] * Math.PI) / 180);
+  const gx = Math.floor(c[0] / CELL_DEG), gy = Math.floor(c[1] / CELL_DEG);
+  let best = Infinity;
+  for (let i = -1; i <= 1; i++)
+    for (let j = -1; j <= 1; j++) {
+      const a = grid.get((gx + i) + ":" + (gy + j));
+      if (!a) continue;
+      for (const p of a) {
+        const dx = (p[0] - c[0]) * mLon, dy = (p[1] - c[1]) * M_PER_DEG_LAT;
+        const d = dx * dx + dy * dy;
+        if (d < best) best = d;
+      }
+    }
+  return Math.sqrt(best);
+}
+
+// Ray casting, in VDC space.
+function pointInRing(p, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 // Per-feature properties are kept deliberately lean: at half a million features
@@ -837,11 +968,39 @@ function main() {
   const agiSeen = new Set();
   const agiOut = [];
   for (const f of agiAll) {
-    const [lon, lat] = f.geometry.coordinates;
-    const k = `${f.properties.label}@${lon.toFixed(4)},${lat.toFixed(4)}`;
+    const c = siteCentre(f);
+    const k = `${f.properties.label}@${c[0].toFixed(4)},${c[1].toFixed(4)}`;
     if (agiSeen.has(k)) continue;
     agiSeen.add(k);
     agiOut.push(f);
+  }
+
+  // Flag the ones Cadent already publishes, so the map can draw each real site
+  // once instead of stacking two markers on it. Roughly half of them overlap.
+  // (Reading a sibling dataset here is a small coupling, but this is the only
+  // place with the time to do it, and the alternative is the browser doing a
+  // 1,360-point nearest-neighbour search on every render.)
+  const cadentSites = readCadentSites();
+  let dupes = 0;
+  if (cadentSites.length) {
+    const grid = spatialIndex(cadentSites);
+    for (const f of agiOut) {
+      const d = nearestMetres(grid, siteCentre(f));
+      if (d <= DUP_RADIUS_M) { f.properties.also_in_cadent = true; dupes++; }
+    }
+  }
+
+  // Plant that stands at an installation is apparatus you could walk up to;
+  // everything else is an in-line valve or fitting buried in the road. It is a
+  // 0.8% slice, which is the difference between a usable layer and 451k dots.
+  if (agiOut.length) {
+    const agiGrid = spatialIndex(agiOut.map(siteCentre));
+    for (const tier of ORDER) {
+      for (const f of byTier[tier] || []) {
+        if (f.properties.kind !== "plant") continue;
+        if (nearestMetres(agiGrid, f.geometry.coordinates) <= SITE_RADIUS_M) f.properties.at_site = true;
+      }
+    }
   }
   let agiMeta = null;
   if (agiOut.length) {
@@ -849,9 +1008,14 @@ function main() {
       path.join(OUT_DIR, "agi.geojson"),
       JSON.stringify({ type: "FeatureCollection", features: agiOut })
     );
-    agiMeta = { file: "agi.geojson", count: agiOut.length };
+    const bounded = agiOut.filter((f) => f.properties.bounded).length;
+    const atSite = ORDER.reduce((n, t) => n + (byTier[t] || []).filter((f) => f.properties.at_site).length, 0);
+    agiMeta = { file: "agi.geojson", count: agiOut.length, bounded, alsoInCadent: dupes, plantAtSites: atSite };
     console.log(
-      `  AGI ${String(agiOut.length).padStart(7)} sites    -> ${OUT_DIR}/agi.geojson  (${agiAll.length - agiOut.length} duplicate labels merged)`
+      `  AGI ${String(agiOut.length).padStart(7)} sites    -> ${OUT_DIR}/agi.geojson`
+    );
+    console.log(
+      `          ${bounded} with a compound outline, ${dupes} also in Cadent's open data, ${atSite} plant items standing at one`
     );
   }
 

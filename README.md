@@ -68,9 +68,8 @@ buildings, from **z16**. Note these come *only* from Cadent: the MAPS layer is
 is partial (~13k in region against ~157k mains), so expect gaps rather than a
 service to every house.
 
-**Installations (AGI)** are the above-ground sites — governor compounds and
-valve compounds. **Valves & fittings** is the in-line plant on the pipes
-themselves (451k of them), split out because it is visually heavy.
+**Installations (AGI)** are the above-ground sites, and **Apparatus at sites**
+the plant standing at one — both covered in detail below.
 
 Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
 near-black for the national transmission network), with a legend in the Gas
@@ -80,16 +79,32 @@ pressure, line weight encodes type, so the two read independently. Click a pipe
 for its pressure tier, material, diameter, what it was inserted into, and survey
 date or install year depending on the source.
 
-**Above-ground sites** draws on two sources under one toggle. Cadent's open
-dataset (1,360 in region) is shown as a filled dot; the MAPS survey adds 457 more
-as a ring, and **215 of those have no Cadent counterpart at all** — roughly half
-the AGIs on the map were missing before. MAPS records them only as OS background
-annotation (`Gas Gov`, `GVC`, `Gas Valve Compound`, `Gas Meter House`), never as
-a gas record, which is why they were easy to lose. The popup shows exactly which
-label was on the plan rather than paraphrasing it. Matching is deliberately
-strict: `GAS` and `GOV` as substrings also catch "The Gas Transportation
-Company", "AGAS DEVELOPMENTS LTD" and "Government", and anything noted as removed
-or abandoned is excluded.
+**Installations (AGI)** draws on two sources under one toggle. Cadent's open
+dataset (1,360 in region) shows as a filled dot. MAPS finds 457 more, of which
+**223 are the same site Cadent already has** (within 30 m) and are suppressed
+rather than stacked as a second marker — so the map adds **234 genuinely new
+installations**. MAPS records them only as OS background annotation (`Gas Gov`,
+`GVC`, `Gas Valve Compound`, `Gas Meter House`), never as a gas record, which is
+why they were easy to lose entirely.
+
+**198 of them carry their surveyed footprint** and draw as the actual outline
+rather than a marker — median 8 m² (a governor kiosk), up to 544 m² (a walled
+compound). The label is usually set *beside* a kiosk rather than inside it, too
+small to letter, so a footprint is matched by containment first and then by
+nearest outline within 12 m, rejecting anything under 2 m² or over 4,000 m² as
+drawing furniture or the building next door. Site names label the map from
+**zoom 17**. The popup says whether the extent is surveyed or label-only, and
+quotes the plan's own wording rather than paraphrasing.
+
+Matching is deliberately strict: `GAS` and `GOV` as substrings also catch "The
+Gas Transportation Company", "AGAS DEVELOPMENTS LTD" and "Government", and
+anything noted removed or abandoned is excluded.
+
+**Apparatus at sites** is the plant standing at an installation — 3,538 points.
+The extract holds 451k plant symbols in total, but 98.7% of them are in-line
+valves and fittings buried in the road: they told you nothing and hid
+everything, so the map draws only the 0.8% within 30 m of an installation. The
+full set is still in the tiles if it is ever wanted.
 
 **Above-ground pipes** (266) come from a further Cadent open dataset. The Cadent
 sites are what Cadent describe as

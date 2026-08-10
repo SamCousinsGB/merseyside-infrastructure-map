@@ -1,1 +1,1 @@
-{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"plant","surveyed":"20201014"},"geometry":{"type":"Point","coordinates":[-2.857693,53.691468]},"id":71884}]}
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"pressure":"LP","kind":"plant","surveyed":"20201014","symbol":53},"geometry":{"type":"Point","coordinates":[-2.857693,53.691468]},"id":71884}]}
