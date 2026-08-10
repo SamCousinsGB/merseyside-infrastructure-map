@@ -30,7 +30,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | Pipes by pressure — **high >7 barg**, **intermediate ≤7**, **medium ≤2**, **low ≤75 mbarg** — plus **services to premises**, **installations (AGI)**, **valves & fittings**, **above-ground pipes** and gas holders |
+| **Gas** | Pipes by pressure — **high >7 barg**, **intermediate ≤7**, **medium ≤2**, **low ≤75 mbarg** — plus **services to premises**, **installations (AGI)**, **apparatus at sites**, **above-ground pipes** and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
