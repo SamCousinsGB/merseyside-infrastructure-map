@@ -667,15 +667,18 @@ function parseTile(file, opts) {
   // square metres - too small to letter - so the label is set BESIDE it rather
   // than inside, and pure containment finds nothing (measured: 0 of 2 on a tile
   // that plainly has both). So: prefer the smallest ring that does contain the
-  // label, else take the nearest ring centroid within ADJACENT_M. Rings outside
+  // label, else take the nearest ring within ADJACENT_M. Rings outside
   // MIN/MAX_SITE_M2 are rejected - below that is drawing furniture, above it is
   // the building or block the site happens to stand near.
+  //
+  // "Nearest" is measured to the ring's EDGE, not its centroid. Centroid
+  // distance silently penalised big compounds: a 4000 m2 site has its centroid
+  // ~32 m in from its own fence, so a label sitting just outside the gate read
+  // as 30+ m away and was rejected, while an identical label beside a 6 m2
+  // kiosk passed. Edge distance asks the question actually meant - is the label
+  // next to this outline - and is size-independent. Measured over the Aintree
+  // extent this lifts label->ring coverage from 46% to 53%.
   const areaM2 = (r) => r.area * Math.abs(sx * sy);
-  const centroid = (r) => {
-    let cx = 0, cy = 0;
-    for (const p of r.pts) { cx += p[0]; cy += p[1]; }
-    return [cx / r.pts.length, cy / r.pts.length];
-  };
   const usable = rings.filter((r) => {
     const m2 = areaM2(r);
     return m2 >= MIN_SITE_M2 && m2 <= MAX_SITE_M2;
@@ -689,8 +692,7 @@ function parseTile(file, opts) {
     if (!best) {
       let bestD = Infinity;
       for (const r of usable) {
-        const c = centroid(r);
-        const d = Math.hypot(c[0] - a.at[0], c[1] - a.at[1]) * Math.abs(sx);
+        const d = ringEdgeDistance(a.at, r.pts) * Math.abs(sx);
         if (d < bestD && d <= ADJACENT_M) { bestD = d; best = r; }
       }
     }
@@ -716,6 +718,23 @@ function parseTile(file, opts) {
   return { features, agi, pipes, plant, rejected, facet: meta.Facet || path.basename(file) };
 }
 
+// Shortest distance from a point to a ring's outline, in VDC units. Used to ask
+// "is this label beside that outline", independent of how big the outline is.
+function ringEdgeDistance(p, pts) {
+  let min = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j], b = pts[i];
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const len2 = vx * vx + vy * vy;
+    // Degenerate segment (repeated vertex): fall back to the vertex itself.
+    let t = len2 ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const d = Math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy));
+    if (d < min) min = d;
+  }
+  return min;
+}
+
 // A closed run of VDC vertices, with its area, or null if it is not a ring.
 function ringOf(e) {
   const n = Math.floor(e.len / 4);
@@ -737,7 +756,12 @@ function ringOf(e) {
 // ---------------------------------------------------------------------------
 const DUP_RADIUS_M = 30;   // same site, drawn by both sources
 const SITE_RADIUS_M = 30;  // plant standing at an installation
-const ADJACENT_M = 12;     // how far a site label may sit from its own footprint
+// How far a site label may sit from its own footprint, measured to the ring's
+// EDGE. Held deliberately tight: 25 m would bound another ~13% of labels in the
+// sample, but past ~15 m the nearest ring stops being the compound and starts
+// being whichever building it stands beside, and a confidently wrong boundary
+// is worse than none.
+const ADJACENT_M = 15;
 const MIN_SITE_M2 = 2;     // below this it is drawing furniture, not a structure
 const MAX_SITE_M2 = 4000;  // above this it is the building the site stands beside
 

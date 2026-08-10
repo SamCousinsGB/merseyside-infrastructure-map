@@ -17,7 +17,7 @@
   "agi": {
     "file": "agi.geojson",
     "count": 457,
-    "bounded": 198,
+    "bounded": 247,
     "alsoInCadent": 223,
     "plantAtSites": 3538
   },
