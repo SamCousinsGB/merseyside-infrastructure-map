@@ -6,22 +6,92 @@ OpenStreetMap-derived data.
 
 **Live map:** https://samcousinsgb.github.io/merseyside-infrastructure-map/
 
+## Reading the map
+
+Two conventions carry most of the information.
+
+**Voltage is colour *and* weight.** Every power line is graded by the highest
+voltage it carries, and the stroke gets heavier as the voltage rises, so the
+grading survives greyscale printing and works for anyone who cannot separate the
+reds. The key lives in the Power drawer.
+
+| Band | Colour | What it is here |
+|------|--------|-----------------|
+| HVDC & 600 kV | violet `#6B2FD6` | the Western HVDC Link |
+| 275 – 400 kV | red `#C4322A` | National Grid transmission |
+| 132 kV | amber `#C9741A` | SP Manweb's sub-transmission network |
+| 33 – 66 kV | green `#3E9E5C` | primary distribution |
+| 6.6 – 25 kV | steel blue `#4E86B0` | 11 kV distribution |
+| LV / not recorded | grey `#8A8F98` | everything below, and anything untagged |
+
+**Solid = overground, dashed = underground.** Dash lengths scale with the stroke,
+so a heavy buried cable reads as a dashed line rather than a row of beads.
+
+Weights and marker sizes are graded by zoom: a stroke that is right in a street
+is a solid blob across a region, so every weight is quoted for zoom 13 and
+scaled from there. Structure that is noise at a regional view is held back until
+it means something — pylons from z13, switches from z15, minor (11 kV pole-top)
+substations from z14 — while the 400 kV substations and the big power stations
+are drawn and named from z9, because they are what you orient by.
+
+Substations are drawn as their footprint **and** a centre dot. A substation
+footprint is ~20 m across, which is sub-pixel at any regional zoom; the dot is
+what you see and click at a wide view, and it is what the label hangs off. The
+footprint takes over once it has an extent on screen. Power stations get a
+generation-source badge — wind, solar, battery, hydro, nuclear, gas, biomass,
+coal, waste — sized by output, because a 348 MW wind farm and a gas CCGT are not
+the same object.
+
+**Labels** are placed, not just attached: candidates are deduped by name (OSM
+splits one 132 kV circuit into dozens of ways, all carrying the same name),
+sorted by importance, then placed greedily — measured, tried right/left/above/
+below, and dropped if all four positions collide with something already placed
+or with the UI panels. So a 1380 MW station never loses its label to an 11 kV
+pole-mount. Hovering anything thickens it and shows a one-line readout; clicking
+opens a card with the record and Street View / Maps links.
+
 ## Layers
 
-A custom control (top-right) groups the layers and switches basemaps. **Power**
-is an expandable group holding the **HV** and **LV** electricity networks; the
-other utilities and transport toggle individually. Lines are coloured per
-category; **solid = overground, dashed = underground / tunnel.**
+A custom control (top-right) groups the layers, switches basemaps and searches.
+**Power** is an expandable group holding the **HV** and **LV** electricity
+networks; the other utilities and transport toggle individually. Tapping a
+group's row toggles the whole group; the chevron expands it for the individual
+layers.
 
-**Every layer starts switched off**, so the map opens on a clean basemap and you
-add only what you want. Nothing is fetched for a layer until you enable it — a
-cold load makes no tile requests at all. Tapping a group's row toggles the whole
-group; the chevron expands it for the individual layers.
+The map opens with the **HV network** and **Power stations** on — they are
+already-loaded local data, so showing them costs no extra requests, and an empty
+basemap is a worse first impression than a slightly busier one. Everything
+tiled (LV, gas, services) still starts **off** and fetches nothing until you
+enable it.
 
-Two display options in the Power drawer are **on** from the start, so they apply
-the moment you switch a power layer on: **HV labels (kV / MW)** and **Colour
-cables by capacity**. Labels follow their own layer — substation and line labels
-need the HV network on, station "Name 1380 MW" labels need Power stations on.
+Two display options in the Power drawer are **on** from the start: **Map labels
+(names, kV, MW)** and **Colour cables by capacity**. Labels follow their own
+layer — substation and line labels need the HV network on, station
+"Name / 1380 MW" labels need Power stations on.
+
+### Search, and sharing a view
+
+Press **/** (or click the box) to search the ~900 named features — substations,
+power stations, works, reservoirs, tank farms and named circuits. Picking a
+result switches its layer on if it was off, flies to it and opens its card.
+
+The URL tracks the view: `#12.5/53.41/-2.98/power.hv,power.ps` is the zoom,
+centre and the layers that are on, so a link to a particular corner of the
+network is a link rather than a paragraph of instructions, and a reload puts you
+back where you were.
+
+### Basemaps
+
+Place labels are drawn in their own pane **above** the data. On an ordinary
+tiled basemap every town name sits under the network and the network sits on top
+of roads it has nothing to do with; splitting the base into ground + labels
+gives the infrastructure a quiet canvas and still lets the place names read.
+
+- **Clean** (default) — Carto Positron, desaturated, labels lifted over the data
+- **Street** — standard OpenStreetMap
+- **Satellite** — Esri World Imagery with light labels over it
+- **Terrain** — OpenTopoMap
+- **Dark** — Carto dark matter; label haloes and marker plates invert to match
 
 | Layer | Contents |
 |-------|----------|
@@ -30,7 +100,7 @@ need the HV network on, station "Name 1380 MW" labels need Power stations on.
 | **Trains** | Merseyrail electrified third rail + its six 750 V DC traction supply points |
 | **Water** | Reservoirs, dams, weirs, treatment works, towers, pumping stations, water mains/aqueducts and water tanks |
 | **Sewage** | Wastewater treatment works, sewage pumping stations and sewage pipelines/tanks |
-| **Gas** | Pipes by pressure — **high >7 barg**, **intermediate ≤7**, **medium ≤2**, **low ≤75 mbarg** — plus **services to premises**, **installations (AGI)**, **apparatus at sites**, **above-ground pipes** and gas holders |
+| **Gas** | Pipes by pressure — **high >7 barg**, **intermediate ≤7**, **medium ≤2**, **low ≤75 mbarg** — plus **services to premises**, **above-ground sites (AGI)**, **above-ground pipes** and gas holders |
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
@@ -68,8 +138,8 @@ buildings, from **z16**. Note these come *only* from Cadent: the MAPS layer is
 is partial (~13k in region against ~157k mains), so expect gaps rather than a
 service to every house.
 
-**Installations (AGI)** are the above-ground sites, and **Apparatus at sites**
-the plant standing at one — both covered in detail below.
+**Above-ground sites (AGI)** is one clean layer: site markers, surveyed
+boundaries and the source plan labels.
 
 Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
 near-black for the national transmission network), with a legend in the Gas
@@ -79,32 +149,35 @@ pressure, line weight encodes type, so the two read independently. Click a pipe
 for its pressure tier, material, diameter, what it was inserted into, and survey
 date or install year depending on the source.
 
-**Installations (AGI)** draws on two sources under one toggle. Cadent's open
-dataset (1,360 in region) shows as a filled dot. MAPS finds 457 more, of which
-**223 are the same site Cadent already has** (within 30 m) and are suppressed
-rather than stacked as a second marker — so the map adds **234 genuinely new
-installations**. MAPS records them only as OS background annotation (`Gas Gov`,
-`GVC`, `Gas Valve Compound`, `Gas Meter House`), never as a gas record, which is
-why they were easy to lose entirely.
+**Above-ground sites (AGI)** draws on two sources under one toggle. Cadent's
+open dataset (1,360 in region) supplies the filled markers. MAPS finds 457 sites,
+of which **223 match a Cadent site** within 30 m. Its 90 label-only overlaps are
+suppressed; for the 133 overlaps with a surveyed footprint, the useful outline
+and plan label remain but the second marker is removed. That leaves **one marker
+per installation**, while still adding **234 genuinely new installations**.
+MAPS records these only as OS background annotation (`Gas Gov`, `GVC`, `Gas
+Valve Compound`, `Gas Meter House`), never as a gas record, which is why they
+were easy to lose entirely.
 
-**198 of them carry their surveyed footprint** and draw as the actual outline
-rather than a marker — median 8 m² (a governor kiosk), up to 544 m² (a walled
+**247 of them carry their surveyed footprint** and draw as the actual outline
+as well as their single marker — median about 10 m² (a governor kiosk), up to
+544 m² (a walled
 compound). The label is usually set *beside* a kiosk rather than inside it, too
 small to letter, so a footprint is matched by containment first and then by
 nearest outline within 12 m, rejecting anything under 2 m² or over 4,000 m² as
-drawing furniture or the building next door. Site names label the map from
-**zoom 17**. The popup says whether the extent is surveyed or label-only, and
-quotes the plan's own wording rather than paraphrasing.
+drawing furniture or the building next door. Plan labels appear from **zoom
+17**, and the same wording is searchable. The popup says whether the extent is
+surveyed or label-only and quotes the plan rather than paraphrasing.
 
 Matching is deliberately strict: `GAS` and `GOV` as substrings also catch "The
 Gas Transportation Company", "AGAS DEVELOPMENTS LTD" and "Government", and
 anything noted removed or abandoned is excluded.
 
-**Apparatus at sites** is the plant standing at an installation — 3,538 points.
-The extract holds 451k plant symbols in total, but 98.7% of them are in-line
-valves and fittings buried in the road: they told you nothing and hid
-everything, so the map draws only the 0.8% within 30 m of an installation. The
-full set is still in the tiles if it is ever wanted.
+The MAPS extract also contains 451k plant symbols. Even the 3,538 within 30 m of
+an installation may be buried valves or fittings rather than above-ground
+apparatus, so the public map does not draw them. The site marker and surveyed
+boundary are the useful, defensible representation; the full plant set remains
+in the tiles if a reliable above-ground classifier becomes available.
 
 **Above-ground pipes** (266) come from a further Cadent open dataset. The Cadent
 sites are what Cadent describe as
@@ -166,8 +239,7 @@ neither GPI Open nor OSM (the nearest mapped transmission line is ~10 km away).
 A pressure-reduction site must be fed at higher pressure than it outputs, so its
 inlet is exactly the tier the open data omits.
 
-Switchable basemaps: Street (OSM), Satellite, Satellite + labels, Topographic,
-and a clean Carto style.
+(Basemaps are listed under [Reading the map](#basemaps).)
 
 ## Rebuilding
 
@@ -184,15 +256,17 @@ The test mocks just enough Leaflet and DOM to execute the page, resolves its
 `fetch()`es against the real files on disk, and pretends every layer is on at
 street zoom — so the tile render paths and their style/popup callbacks actually
 run. It fails if the page reports an error or draws nothing. Set `ZOOM=n` to
-check a different band (e.g. `ZOOM=13` should fetch no tiles at all).
+check a different band (e.g. `ZOOM=13` should fetch MAPS IP/MP tiles but no
+street-level LV, gas services or low-pressure tiles).
 
 > **`final_map.py` is stale.** It still carries the older template that inlined
 > the feature data (`const data=__DATA__`), whereas the deployed `index.html` has
 > since moved to async `fetch('data.json')` + `initData()`. It also needs source
 > inputs that are git-ignored, so it will not run from a fresh clone. **Edit
-> `index.html` directly** — it is the file that ships. Gas-layer changes have been
-> applied to both to stop the two drifting further apart, but the two files are
-> not otherwise interchangeable.
+> `index.html` directly** — it is the file that ships. Gas-layer changes were
+> applied to both to stop the two drifting further apart, but the styling and
+> labelling rewrite described in [Reading the map](#reading-the-map) exists only
+> in `index.html`; the two files are not interchangeable.
 
 ### LV network tiles
 Built once from SP Energy Networks' public ConnectMore WFS and committed, so the

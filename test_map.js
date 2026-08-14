@@ -17,7 +17,7 @@ const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1
 const app = scripts.find(s => s.includes('initData') || s.includes('const data='));
 if (!app) { console.error('FAIL: no inline app script found'); process.exit(1); }
 
-// Zoom the fake viewport sits at: 17 so LV cables (z16+) and gas services (z17+)
+// Zoom the fake viewport sits at: 17 so LV cables and gas services (both z16+)
 // both render. Override with ZOOM=n to spot-check a different band.
 const ZOOM = Number(process.env.ZOOM || 17);
 
@@ -29,6 +29,7 @@ const perLayer = {};        // source -> features drawn, so a silently empty tre
 // interleave with data.json, so anything time-based mislabels them.
 function tagOf(f) {
   const p = (f && f.properties) || {};
+  if (p.kind === 'main' && p.pressure) return 'maps-main';
   if (p.du !== undefined || (p.t !== undefined && p.p !== undefined)) return 'gas';
   if (p.rag !== undefined) return 'lv';
   if (p.cat !== undefined) return 'osm';
@@ -37,7 +38,7 @@ function tagOf(f) {
 }
 
 const allLayers = [];       // every layer the page builds, so the test can switch them on
-let labelsDrawn = 0;        // HV / power-station tooltips mounted
+let labelsDrawn = 0;        // map labels (substation / station / line names) mounted
 // `register:false` for the per-feature child layers, so the "switch everything
 // on" sweep below only walks real layers and not 20k features.
 function layer(register = true) {
@@ -49,7 +50,9 @@ function layer(register = true) {
     fire(ev) { for (const fn of (h[ev] || [])) fn(); return o; },
     addTo() { o.fire('add'); return o; },
     remove() { o.fire('remove'); return o; },
-    addLayer(l) { if (l) kids.push(l); return o; },
+    // labels are reconciled into their group with addLayer (not tooltip.addTo),
+    // so this is where a mounted label gets counted
+    addLayer(l) { if (l) { kids.push(l); if (l._isTip) labelsDrawn++; } return o; },
     removeLayer(l) { const i = kids.indexOf(l); if (i >= 0) kids.splice(i, 1); return o; },
     eachLayer(fn) { for (const c of kids.slice()) fn(c); return o; },
     getLayers() { return kids.slice(); },
@@ -63,12 +66,24 @@ function layer(register = true) {
   if (register) allLayers.push(o);
   return o;
 }
+// The fake viewport. Deliberately small (a couple of city blocks) so the tile
+// windows the LV / gas / MAPS layers compute stay a handful of tiles rather than
+// thousands. `contains` is honest about that box, because the label engine asks
+// it which candidates are on screen and then projects them - a contains() that
+// says yes to everything paired with a real projection means every label lands
+// off-screen and the placement pass is never exercised.
+const VIEW = { w: -2.995, e: -2.965, s: 53.385, n: 53.415 };
 function bounds() {
   const b = {
-    getWest: () => -2.99, getEast: () => -2.97,
-    getNorth: () => 53.41, getSouth: () => 53.39,
-    getCenter: () => ({ lat: 53.4, lng: -2.98 }),
-    pad: () => b, contains: () => true,
+    getWest: () => VIEW.w, getEast: () => VIEW.e,
+    getNorth: () => VIEW.n, getSouth: () => VIEW.s,
+    getCenter: () => ({ lat: (VIEW.n + VIEW.s) / 2, lng: (VIEW.w + VIEW.e) / 2 }),
+    pad: () => b,
+    contains: (ll) => {
+      const lat = Array.isArray(ll) ? ll[0] : ll && ll.lat;
+      const lng = Array.isArray(ll) ? ll[1] : ll && ll.lng;
+      return lat >= VIEW.s && lat <= VIEW.n && lng >= VIEW.w && lng <= VIEW.e;
+    },
   };
   return b;
 }
@@ -90,12 +105,23 @@ function drawAll(data, opts, parent) {
 }
 
 const fakeMap = {
-  fitBounds() {}, addLayer() {}, removeLayer() {}, on() {}, off() {},
+  fitBounds() {}, addLayer() {}, removeLayer() {}, on() {}, off() {}, once() {},
   hasLayer() { return true; },              // pretend every toggle is on
   getZoom() { return ZOOM; },
   getBounds() { return bounds(); },
-  closePopup() {}, setView() {}, getCenter() { return { lat: 53.4, lng: -2.98 }; },
+  closePopup() {}, setView() {}, flyTo() {},
+  getCenter() { return { lat: 53.4, lng: -2.98, distanceTo: () => 1 }; },
   createPane() { return el(); },
+  // the label engine projects each candidate to pixels and collision-tests it,
+  // so the fake map has to be able to answer both questions. Linear across the
+  // fake viewport, which is what a real projection is over a box this small.
+  getSize() { return { x: 1280, y: 800 }; },
+  latLngToContainerPoint(ll) {
+    return { x: (ll.lng - VIEW.w) / (VIEW.e - VIEW.w) * 1280,
+             y: (VIEW.n - ll.lat) / (VIEW.n - VIEW.s) * 800 };
+  },
+  getContainer() { return el(); },
+  _loaded: true,
   attributionControl: { addAttribution() { return this; }, setPrefix() { return this; } },
 };
 
@@ -110,16 +136,18 @@ const L = {
   circleMarker() { return layer(); },
   latLng(lat, lng) { return { lat, lng, distanceTo: () => 0, equals: () => false }; },
   tooltip() {
-    const t = { setLatLng() { return t; }, setContent(c) { t._c = c; return t; },
+    const t = { _isTip: true, setLatLng() { return t; }, setContent(c) { t._c = c; return t; },
                 addTo() { labelsDrawn++; return t; } };
     return t;
   },
   geoJSON(data, opts) { const o = layer(); o._opts = opts; drawAll(data, opts, o); return o; },
   control(o) { const c = layer(); c.addTo = () => { c._map = fakeMap; return c; }; c.remove = () => { c._map = null; return c; }; return c; },
-  DomUtil: { create() { return { style: {}, innerHTML: '', classList: { add() {}, remove() {} } }; } },
-  DomEvent: { on() {}, stop() {}, disableClickPropagation() {}, disableScrollPropagation() {} },
+  DomUtil: { create() { return el(); } },
+  DomEvent: { on() {}, stop() {}, preventDefault() {}, disableClickPropagation() {}, disableScrollPropagation() {} },
 };
 L.control.layers = () => layer();
+L.control.zoom = () => layer();
+L.control.scale = () => layer();
 L.canvas = function () { return layer(); };
 L.canvas.tile = function () { return {}; };
 L.setOptions = function () {};
@@ -141,6 +169,9 @@ global.document = {
   addEventListener() {}, querySelector: () => null, querySelectorAll: () => [],
 };
 global.window = { addEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
+// the page encodes the view (position + which layers are on) into location.hash
+global.location = { hash: process.env.HASH || '' };
+global.history = { replaceState(_a, _b, h) { global.location.hash = h; } };
 global.requestAnimationFrame = (fn) => setTimeout(fn, 0);
 global.cancelAnimationFrame = (id) => clearTimeout(id);
 
@@ -173,6 +204,17 @@ console.error = (...a) => { pageErrors.push(a.map(String).join(' ')); realError(
     // let data.json / extra_infra resolve and the sub-layers get built
     for (let i = 0; i < 40; i++) await new Promise(r => setImmediate(r));
     await new Promise(r => setTimeout(r, 300));
+    // Cadent mains that cross the rectangular MAPS envelope must be clipped,
+    // not kept/dropped wholesale based on one midpoint. This synthetic line
+    // crosses both sides and therefore has two outside pieces.
+    const clip = global.window.MIM && global.window.MIM.data && global.window.MIM.data.clipOutsideMaps;
+    if (!clip) throw new Error('boundary clipping helper was not exposed');
+    const crossing = { id:'test-crossing', properties:{p:'LP'},
+      geometry:{type:'LineString',coordinates:[[-3.4,53.4],[-2.0,53.4]]} };
+    const inside = { id:'test-inside', properties:{p:'LP'},
+      geometry:{type:'LineString',coordinates:[[-3.0,53.4],[-2.8,53.4]]} };
+    if (clip(crossing).length !== 2) throw new Error('cross-boundary main was not split into two outside parts');
+    if (clip(inside).length !== 0) throw new Error('main wholly inside MAPS coverage was not suppressed');
     // Every layer now ships switched OFF, so nothing would fetch a tile on its
     // own. Fire the 'add' handlers the way the layer deck does when a user turns
     // a layer on — that is what drives the LV / gas tile renders.
@@ -196,6 +238,6 @@ console.error = (...a) => { pageErrors.push(a.map(String).join(' ')); realError(
   console.log(`OK: script ran clean at z${ZOOM}, exercised ${featuresExercised} features (${detail})`);
   // cumulative across rebuilds (each build clears first and is capped), so this
   // is "labels were mounted at all", not a simultaneous count
-  console.log(`    hv label mounts: ${labelsDrawn} (cumulative over rebuilds)`);
+  console.log(`    map label mounts: ${labelsDrawn} (cumulative over rebuilds)`);
   console.log(`    fetched: ${req}`);
 })();

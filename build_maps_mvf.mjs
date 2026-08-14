@@ -937,6 +937,50 @@ function main() {
   }
   if (rejectedAll) console.log(`  (${rejectedAll} features outside their own tile extent - rejected as misparsed)`);
 
+  // Above-ground installations. One site can be labelled in more than one tile
+  // where it straddles a boundary, so collapse anything with the same label
+  // within about 11 m (4 dp) to a single point.
+  const agiSeen = new Set();
+  const agiOut = [];
+  for (const f of agiAll) {
+    const c = siteCentre(f);
+    const k = `${f.properties.label}@${c[0].toFixed(4)},${c[1].toFixed(4)}`;
+    if (agiSeen.has(k)) continue;
+    agiSeen.add(k);
+    agiOut.push(f);
+  }
+
+  // Flag the ones Cadent already publishes, so the map can draw each real site
+  // once instead of stacking two markers on it. Roughly half of them overlap.
+  // (Reading a sibling dataset here is a small coupling, but this is the only
+  // place with the time to do it, and the alternative is the browser doing a
+  // 1,360-point nearest-neighbour search on every render.)
+  const cadentSites = readCadentSites();
+  let dupes = 0;
+  if (cadentSites.length) {
+    const grid = spatialIndex(cadentSites);
+    for (const f of agiOut) {
+      const d = nearestMetres(grid, siteCentre(f));
+      if (d <= DUP_RADIUS_M) { f.properties.also_in_cadent = true; dupes++; }
+    }
+  }
+
+  // Plant that stands at an installation is apparatus you could walk up to;
+  // everything else is an in-line valve or fitting buried in the road. It is a
+  // 0.8% slice, which is the difference between a usable layer and 451k dots.
+  if (agiOut.length) {
+    const agiGrid = spatialIndex(agiOut.map(siteCentre));
+    for (const tier of ORDER) {
+      for (const f of byTier[tier] || []) {
+        if (f.properties.kind !== "plant") continue;
+        if (nearestMetres(agiGrid, f.geometry.coordinates) <= SITE_RADIUS_M) f.properties.at_site = true;
+      }
+    }
+  }
+
+  // Write only after the AGI pass above has marked site-associated plant. The
+  // old order wrote every pressure tile first, so meta.json reported thousands
+  // of `at_site` items that the actual tile files could never expose.
   // Rebuild the output tree from scratch so a re-run with a smaller extent
   // cannot leave stale geometry behind.
   fs.rmSync(OUT_DIR, { recursive: true, force: true });
@@ -984,47 +1028,6 @@ function main() {
   if (!written) {
     console.log("\nNo gas features found in that extent - only background mapping.");
     return;
-  }
-
-  // Above-ground installations. One site can be labelled in more than one tile
-  // where it straddles a boundary, so collapse anything with the same label
-  // within about 11 m (4 dp) to a single point.
-  const agiSeen = new Set();
-  const agiOut = [];
-  for (const f of agiAll) {
-    const c = siteCentre(f);
-    const k = `${f.properties.label}@${c[0].toFixed(4)},${c[1].toFixed(4)}`;
-    if (agiSeen.has(k)) continue;
-    agiSeen.add(k);
-    agiOut.push(f);
-  }
-
-  // Flag the ones Cadent already publishes, so the map can draw each real site
-  // once instead of stacking two markers on it. Roughly half of them overlap.
-  // (Reading a sibling dataset here is a small coupling, but this is the only
-  // place with the time to do it, and the alternative is the browser doing a
-  // 1,360-point nearest-neighbour search on every render.)
-  const cadentSites = readCadentSites();
-  let dupes = 0;
-  if (cadentSites.length) {
-    const grid = spatialIndex(cadentSites);
-    for (const f of agiOut) {
-      const d = nearestMetres(grid, siteCentre(f));
-      if (d <= DUP_RADIUS_M) { f.properties.also_in_cadent = true; dupes++; }
-    }
-  }
-
-  // Plant that stands at an installation is apparatus you could walk up to;
-  // everything else is an in-line valve or fitting buried in the road. It is a
-  // 0.8% slice, which is the difference between a usable layer and 451k dots.
-  if (agiOut.length) {
-    const agiGrid = spatialIndex(agiOut.map(siteCentre));
-    for (const tier of ORDER) {
-      for (const f of byTier[tier] || []) {
-        if (f.properties.kind !== "plant") continue;
-        if (nearestMetres(agiGrid, f.geometry.coordinates) <= SITE_RADIUS_M) f.properties.at_site = true;
-      }
-    }
   }
   let agiMeta = null;
   if (agiOut.length) {
