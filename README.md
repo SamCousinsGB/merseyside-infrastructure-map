@@ -30,9 +30,10 @@ so a heavy buried cable reads as a dashed line rather than a row of beads.
 Weights and marker sizes are graded by zoom: a stroke that is right in a street
 is a solid blob across a region, so every weight is quoted for zoom 13 and
 scaled from there. Structure that is noise at a regional view is held back until
-it means something — pylons from z13, switches from z15, minor (11 kV pole-top)
-substations from z14 — while the 400 kV substations and the big power stations
-are drawn and named from z9, because they are what you orient by.
+it means something — pylons from z13 and switches from z15. Power stations can
+still orient a regional view, but substation names are deliberately local detail:
+transmission sites appear from z14, 132 kV from z15, primary distribution from
+z16 and minor sites from z17.
 
 Substations are drawn as their footprint **and** a centre dot. A substation
 footprint is ~20 m across, which is sub-pixel at any regional zoom; the dot is

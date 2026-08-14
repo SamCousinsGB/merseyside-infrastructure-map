@@ -1486,11 +1486,11 @@ function updateLvHint(){
 //    3. STAY OUT OF THE UI. The layer deck and the title card are registered as
 //       exclusion rectangles, so no name is ever half-hidden under a panel.
 //
-//  Zoom gates are per-feature-importance rather than one global threshold: the
-//  400 kV substations and the big stations are named from z9 (they are what you
-//  are orienting by at a regional view), distribution substations from z13, and
-//  11 kV from z15. Text is measured with a real canvas metric, so the collision
-//  boxes match what is actually drawn.
+//  Zoom gates are per-feature-importance rather than one global threshold. Power
+//  stations can orient a regional view, but substation names are local detail:
+//  transmission sites start at z14, 132 kV at z15, primary distribution at z16
+//  and minor sites at z17. Text is measured with a real canvas metric, so the
+//  collision boxes match what is actually drawn.
 // ============================================================================
 const LAB_CAP = 220;             // hard ceiling on simultaneously-mounted labels
 let labelsOn   = true;           // toggle state (deck default: on)
@@ -1545,9 +1545,9 @@ function hvLabelOf(f){
     const big=kv>=220||/transmission|converter/.test(st);
     return {name:p.name, sub:kvText(p.voltage),
             cls:big?'mlab big':'mlab', pri:(big?900:600)+kv,
-            minz: kv>=220||/transmission|converter/.test(st) ? 9
-                : kv>=100 ? 10
-                : kv>=26||/^(distribution|industrial|traction)/.test(st) ? 13 : 15,
+            minz: kv>=220||/converter/.test(st) ? 14
+                : kv>=100 ? 15
+                : kv>=26||/^(distribution|industrial|traction)/.test(st) ? 16 : 17,
             gap: Math.max(4,subRadius(p))+4};
   }
   if(/Point/.test(t)) return null;                      // towers, switches: never named usefully
@@ -1649,7 +1649,10 @@ function buildLabels(){
   //    priority instance, and among equals the one nearest the middle of the
   //    screen, which is where the eye already is.
   const mid=map.getCenter(), best=new Map();
-  const keyOf = d => d.name+'|'+(d.sub||'')+'|'+d.cls;
+  // A physical site may be mapped as several nested voltage compounds with
+  // different styling classes. The reader still sees one place, so dedupe by
+  // displayed name alone and let priority retain its highest-voltage record.
+  const keyOf = d => d.name;
   for(const d of cands){
     const key=keyOf(d);
     const prev=best.get(key);
@@ -1727,9 +1730,17 @@ function setLabels(on){
     if(map.hasLayer(labelLayer)) map.removeLayer(labelLayer);
   }
 }
+// Do not let tooltip text ride Leaflet's animated zoom transform: large labels
+// appear to fly across the map even when their final anchor is stable. Hide the
+// dedicated label pane for the brief animation, rebuild at the destination and
+// reveal it only once every label is in its final place.
+map.on('zoomstart',()=>{ if(labelPane) labelPane.style.visibility='hidden'; });
 // A zoom change alters every stroke weight and every label gate, so both have to
 // re-run; regrade() first, since the labels measure the marker radii it sets.
-map.on('zoomend',()=>{ regrade(); if(labelsOn) buildLabels(); });
+map.on('zoomend',()=>{
+  regrade(); if(labelsOn) buildLabels();
+  if(labelPane) labelPane.style.visibility='visible';
+});
 
 // ============================================================================
 //  SEARCH
