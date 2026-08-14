@@ -17,6 +17,11 @@ check(!/leaflet(?:\.css|@|\bL\.map)/i.test(html),'legacy Leaflet runtime is stil
 check(/type:'vector'/.test(html)&&/source-layer':'network'/.test(html),'vector-tile sources/layers are missing');
 check(/renderWorldCopies:false/.test(html)&&/antialias:false/.test(html),'performance-sensitive map options are missing');
 check(/queryRenderedFeatures/.test(html),'GPU feature picking / popups are missing');
+check(/class="fx-deck"/.test(html)&&/class="fx-chip/.test(html),'original compact layer-deck design is missing');
+check(/power:'#6A2FBF'/.test(html)&&/fuel:'#C026A8'/.test(html)&&/train:'#2B2F36'/.test(html),'original infrastructure palette changed');
+check(/const ICON=/.test(html)&&/data-key="\$\{k\}"/.test(html),'SVG layer icon system is missing');
+check(!html.includes("['case',['>=',['zoom']"),'invalid nested zoom expression reintroduced');
+check(!html.includes("['*',['interpolate',['linear'],['zoom']"),'zoom interpolation must remain the top-level expression');
 
 const inline=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).pop();
 check(inline,'inline application script was not found');
