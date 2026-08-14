@@ -104,6 +104,27 @@ function drawAll(data, opts, parent) {
   }
 }
 
+function tileX(lon, z) { return Math.floor((lon + 180) / 360 * Math.pow(2, z)); }
+function tileY(lat, z) {
+  const r = lat * Math.PI / 180;
+  return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z));
+}
+function exerciseGrid(grid) {
+  const z = Math.round(ZOOM);
+  if (z < Number((grid.options || {}).minZoom || 0) || typeof grid.createTile !== 'function') return;
+  const x0 = tileX(VIEW.w, z), x1 = tileX(VIEW.e, z);
+  const y0 = tileY(VIEW.n, z), y1 = tileY(VIEW.s, z);
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    grid.createTile({ x, y, z }, (_err, tile) => {
+      for (const f of (tile && tile._mimFeatures) || []) {
+        featuresExercised++;
+        const tag = tagOf(f);
+        perLayer[tag] = (perLayer[tag] || 0) + 1;
+      }
+    });
+  }
+}
+
 const fakeMap = {
   fitBounds() {}, addLayer() {}, removeLayer() {}, on() {}, off() {}, once() {},
   hasLayer() { return true; },              // pretend every toggle is on
@@ -145,12 +166,28 @@ const L = {
   DomUtil: { create() { return el(); } },
   DomEvent: { on() {}, stop() {}, preventDefault() {}, disableClickPropagation() {}, disableScrollPropagation() {} },
 };
+L.GridLayer = { extend(proto) {
+  function Grid(options) {
+    const o = layer();
+    Object.assign(o, proto);
+    o.options = Object.assign({}, options);
+    o._map = fakeMap;
+    o.getTileSize = () => ({ x: Number(o.options.tileSize || 256), y: Number(o.options.tileSize || 256) });
+    o.redraw = () => { exerciseGrid(o); return o; };
+    if (proto.initialize) proto.initialize.call(o, options);
+    o.on('add', () => { o._map = fakeMap; exerciseGrid(o); });
+    o.on('remove', () => { o._map = null; });
+    return o;
+  }
+  return Grid;
+} };
+L.GridLayer.prototype = { onAdd() {}, onRemove() {} };
 L.control.layers = () => layer();
 L.control.zoom = () => layer();
 L.control.scale = () => layer();
 L.canvas = function () { return layer(); };
 L.canvas.tile = function () { return {}; };
-L.setOptions = function () {};
+L.setOptions = function (o, options) { o.options = Object.assign(o.options || {}, options || {}); return o.options; };
 L.Control = { extend(proto) {
   function C(...a) { if (proto.initialize) proto.initialize.apply(this, a); }
   C.prototype = Object.assign({}, proto, { addTo() { return this; } });
@@ -158,6 +195,10 @@ L.Control = { extend(proto) {
 } };
 
 // Minimal DOM so the page's boot/error handling and any control markup can run.
+const canvasContext = () => ({
+  scale() {}, save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
+  stroke() {}, fill() {}, arc() {}, setLineDash() {}, measureText: s => ({ width: String(s).length * 7 }),
+});
 const el = () => ({
   style: {}, innerHTML: '', className: '', dataset: {},
   classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -165,10 +206,12 @@ const el = () => ({
   querySelector: () => null, querySelectorAll: () => [],
 });
 global.document = {
-  getElementById: () => el(), createElement: () => el(), body: el(),
+  getElementById: () => el(), createElement: tag => {
+    const o = el(); if (String(tag).toLowerCase() === 'canvas') o.getContext = () => canvasContext(); return o;
+  }, body: el(),
   addEventListener() {}, querySelector: () => null, querySelectorAll: () => [],
 };
-global.window = { addEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
+global.window = { devicePixelRatio: 1, addEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
 // the page encodes the view (position + which layers are on) into location.hash
 global.location = { hash: process.env.HASH || '' };
 global.history = { replaceState(_a, _b, h) { global.location.hash = h; } };

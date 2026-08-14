@@ -43,7 +43,8 @@ generation-source badge — wind, solar, battery, hydro, nuclear, gas, biomass,
 coal, waste — sized by output, because a 348 MW wind farm and a gas CCGT are not
 the same object.
 
-**Labels** are placed, not just attached: candidates are deduped by name (OSM
+**Labels** are placed, not just attached: power, site and AGI candidates are
+limited to the current viewport and deduped by name (OSM
 splits one 132 kV circuit into dozens of ways, all carrying the same name),
 sorted by importance, then placed greedily — measured, tried right/left/above/
 below, and dropped if all four positions collide with something already placed
@@ -107,9 +108,9 @@ gives the infrastructure a quiet canvas and still lets the place names read.
 The **LV network** is the real distribution low-voltage network from SP Energy
 Networks (not OSM). Transformers appear from zoom 15 and cables from **zoom 16**
 (street level) — there is far too much to show region-wide. The ~1.47M source
-cable segments are merged into continuous polylines and drawn as real,
-full-precision vectors for the current viewport, so they stay crisp at every
-zoom. Cables are shaded by capacity headroom (**green** = spare, **amber** =
+cable segments are merged into continuous polylines and painted into batched
+canvas tiles for the current viewport, so they stay crisp without creating one
+Leaflet object per cable. Cables are shaded by capacity headroom (**green** = spare, **amber** =
 limited, **red** = at/near capacity, **grey** = not assessed); switch
 **"Colour cables by capacity"** off to draw them all in one colour instead.
 Transformers are yellow markers. Click a transformer for "LV transformer" + its
@@ -140,7 +141,9 @@ is partial (~13k in region against ~157k mains), so expect gaps rather than a
 service to every house.
 
 **Above-ground sites (AGI)** is one clean layer: site markers, surveyed
-boundaries and the source plan labels.
+boundaries and the source plan labels. Labels enter the same viewport-only
+collision engine as substations, so a local view is labelled without mounting
+hundreds of off-screen tooltips or making names ride the zoom animation.
 
 Pipes are **coloured by pressure tier** (orange = low, ≤75 mbarg; through to
 near-black for the national transmission network), with a legend in the Gas
@@ -253,6 +256,12 @@ after any edit:
 node test_map.js index.html  # runs the page JS against the real committed data
 ```
 
+The dense networks use a custom `L.GridLayer`: each visible screen tile is one
+canvas, features are batched by style, and one map-level hit test keeps pipe and
+cable popups working. Zooming therefore transforms a small set of completed tile
+canvases instead of rebuilding thousands of `L.Polyline` objects. In-flight tile
+fetches are shared across pressure layers.
+
 The test mocks just enough Leaflet and DOM to execute the page, resolves its
 `fetch()`es against the real files on disk, and pretends every layer is on at
 street zoom — so the tile render paths and their style/popup callbacks actually
@@ -283,7 +292,7 @@ node build_lv_geojson_tiles.mjs lv_cables_merged.geojson tiles/lvgeo    # bin in
 GeoJSON is git-ignored). `merge_lv.mjs` chains the ~2 m segments into continuous
 polylines per (capacity, cable type, voltage). `build_lv_geojson_tiles.mjs` bins
 them into `tiles/lvgeo/{x}/{y}.json` on a zoom-14 grid; at runtime the map fetches
-only the cells in view and draws them as crisp `L.geoJSON` canvas polylines.
+only the cells in view and batches them into crisp screen-tile canvases.
 
 ### Cadent gas network tiles
 Same shape as the LV build, from Cadent's open data portal. The licence is open

@@ -29,6 +29,9 @@ html,body,#map{height:100%;margin:0}
 .leaflet-map-pane,.leaflet-tile-container,.leaflet-pane canvas{
   will-change:transform,opacity;backface-visibility:hidden;
 }
+/* Dense utility networks are painted into ordinary Leaflet tiles. They stay on
+   the compositor during zooms and never enter the DOM hit-testing tree. */
+.leaflet-tile.mim-vector-tile{pointer-events:none;image-rendering:auto;transition:none!important}
 
 /* Dark basemaps: the page keeps its light chrome (cards stay white and
    legible) but anything drawn ON the tiles - label haloes, the graticule of
@@ -245,13 +248,8 @@ html,body,#map{height:100%;margin:0}
 .dark .mlab{color:#eaf0f7}
 .dark .mlab em{opacity:.72}
 
-/* Site labels (gas AGI etc). Hidden until the map carries .showlbl (zoom 17+). */
-.leaflet-tooltip.sitelbl{display:none;background:none;border:none;box-shadow:none;padding:0;
-  font:700 10.5px/1.2 var(--font);color:#7A3B00;white-space:nowrap;pointer-events:none;
-  text-shadow:0 0 2px var(--halo),0 0 3px var(--halo),0 0 4px var(--halo),0 0 6px var(--halo)}
-.leaflet-tooltip.sitelbl::before{display:none}
-.showlbl .leaflet-tooltip.sitelbl{display:block}
-.dark .leaflet-tooltip.sitelbl{color:#f0b877}
+.mlab.agi{color:#7A3B00}
+.dark .mlab.agi{color:#f0b877}
 
 /* ---- hover readout ------------------------------------------------------- */
 .hovtip{background:rgba(15,23,42,.92);backdrop-filter:blur(6px);border:none;box-shadow:0 4px 14px -4px rgba(15,23,42,.55);
@@ -546,15 +544,24 @@ function styleFor(cat,f){
   return /Point/.test(t) ? catPointStyle(cat)(f) : catStyle(cat)(f);
 }
 
-// Layers that must be restyled when the zoom band changes, as {layer,cat}.
+// Only points (and power footprints) change with zoom. Keeping references to
+// that small dynamic subset avoids walking and re-applying the unchanged style
+// of every line in a network at each zoom end.
 const graded=[];
+function restyleDynamic(g){
+  for(const d of g.dynamic||[]){
+    const s=g.cat==='power'?powerStyle(d.f):styleFor(g.cat,d.f);
+    try{if(d.l.setRadius&&s.radius!=null)d.l.setRadius(s.radius);d.l.setStyle(s);}catch(e){}
+  }
+  g.band=zBand;
+}
 function regrade(){
   const z=map.getZoom(), b=Math.round(z);
   if(b===zBand) return;                  // same band: nothing would change
   zBand=b; zMul=zoomMul(z);
   for(const g of graded){
     if(!g.layer||!map.hasLayer(g.layer)) continue;   // off-map layers restyle when re-added
-    try{g.layer.setStyle(g.cat==='power'?powerStyle:styleFor.bind(null,g.cat));g.band=zBand;}catch(e){}
+    restyleDynamic(g);
   }
   for(const fn of gradedHooks) fn();
 }
@@ -740,24 +747,26 @@ function subLayer(cat, feats){
   const isPower = cat==='power';
   const lineStyle = isPower ? powerStyle : catStyle(cat);
   const ptStyle   = isPower ? powerStyle : catPointStyle(cat);
-  const renderer=vectorCanvas();
+  const renderer=vectorCanvas(),dynamic=[];
   const lyr = L.geoJSON({type:'FeatureCollection',features:feats},{
     renderer,
     style:lineStyle,
     pointToLayer:(f,ll)=>L.circleMarker(ll,Object.assign({renderer},ptStyle(f))),
     onEachFeature:(f,l)=>{
+      const type=(f.geometry&&f.geometry.type)||'';
+      if(/Point/.test(type)||(isPower&&/Polygon/.test(type)))dynamic.push({f,l});
       bindHover(cat,f,l, ff=>/Point/.test(ff.geometry&&ff.geometry.type||'')?ptStyle(ff):lineStyle(ff));
       l.on('click',e=>{
         const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
         L.popup({className:'tt'}).setLatLng(ll).setContent(pop(f.properties,ll.lat,ll.lng)).openOn(map);});
     },
   });
-  const gradeRec={layer:lyr,cat,band:zBand};graded.push(gradeRec);
+  const gradeRec={layer:lyr,cat,band:zBand,dynamic};graded.push(gradeRec);
   // a layer switched on after a zoom change is still carrying the old band's
   // weights, so bring it up to date as it is added rather than on the next pan
   lyr.on('add',()=>{
     if(gradeRec.band===zBand)return;
-    try{lyr.setStyle(isPower?powerStyle:styleFor.bind(null,cat));gradeRec.band=zBand;}catch(e){}
+    restyleDynamic(gradeRec);
   });
   return lyr;
 }
@@ -838,14 +847,138 @@ function dataWindow(bounds,grid){return{
   y0:lvLat2y(bounds.getNorth(),grid),y1:lvLat2y(bounds.getSouth(),grid)};}
 const windowCovers=(have,want)=>have&&want&&want.x0>=have.x0&&want.x1<=have.x1
   &&want.y0>=have.y0&&want.y1<=have.y1;
-const LV_GRID=14, LV_MINZOOM=16, LV_MAXCACHE=80;
+
+// ---- GPU-friendly tiled canvas for the dense street networks ----------------
+// The source files are sparse GeoJSON tiles at a fixed data zoom. Turning each
+// feature in those files into an L.Polyline still creates tens of thousands of
+// JavaScript objects, event targets and redraw operations. Instead, each visible
+// screen tile is one canvas: fetch the overlapping data tiles, batch paths by
+// style, and let Leaflet animate the finished canvases exactly like a basemap.
+// A single map-level hit test preserves click popups without per-pipe listeners.
+const denseCanvasLayers=[];
+const _featureBoxes=new WeakMap();
+const tileLon=(x,z)=>x/Math.pow(2,z)*360-180;
+const tileLat=(y,z)=>Math.atan(Math.sinh(Math.PI*(1-2*y/Math.pow(2,z))))*180/Math.PI;
+function displayTileBounds(c){return{
+  west:tileLon(c.x,c.z),east:tileLon(c.x+1,c.z),
+  north:tileLat(c.y,c.z),south:tileLat(c.y+1,c.z)};}
+function geometryLines(g){return !g?[]:g.type==='LineString'?[g.coordinates]
+  :g.type==='MultiLineString'?g.coordinates:[];}
+function featureBox(f){
+  if(_featureBoxes.has(f))return _featureBoxes.get(f);
+  const g=f&&f.geometry; let xmin=Infinity,ymin=Infinity,xmax=-Infinity,ymax=-Infinity;
+  const visit=c=>{if(!c||!Number.isFinite(c[0])||!Number.isFinite(c[1]))return;
+    xmin=Math.min(xmin,c[0]);xmax=Math.max(xmax,c[0]);ymin=Math.min(ymin,c[1]);ymax=Math.max(ymax,c[1]);};
+  if(g&&g.type==='Point')visit(g.coordinates);
+  else for(const line of geometryLines(g))for(const c of line)visit(c);
+  const b=xmin===Infinity?null:[xmin,ymin,xmax,ymax];_featureBoxes.set(f,b);return b;
+}
+const boxesMeet=(a,b)=>a&&a[0]<=b.east&&a[2]>=b.west&&a[1]<=b.north&&a[3]>=b.south;
+function mercatorPixel(c,z){
+  const scale=256*Math.pow(2,z), sin=Math.max(-.9999,Math.min(.9999,Math.sin(c[1]*Math.PI/180)));
+  return{x:(c[0]+180)/360*scale,y:(.5-Math.log((1+sin)/(1-sin))/(4*Math.PI))*scale};
+}
+function canvasDash(v){
+  if(!v)return[];if(Array.isArray(v))return v.map(Number).filter(Number.isFinite);
+  return String(v).split(/[ ,]+/).map(Number).filter(Number.isFinite);
+}
+function segmentDistanceSq(p,a,b){
+  const dx=b.x-a.x,dy=b.y-a.y;if(!dx&&!dy)return(p.x-a.x)**2+(p.y-a.y)**2;
+  const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy)));
+  const x=a.x+t*dx,y=a.y+t*dy;return(p.x-x)**2+(p.y-y)**2;
+}
+const JsonCanvasGrid=L.GridLayer.extend({
+  initialize(options){
+    L.setOptions(this,options);this._featureTiles=new Map();
+    this.on('tileunload',e=>{if(e&&e.coords)this._featureTiles.delete(this._tileKey(e.coords));
+      if(e&&e.tile)e.tile._mimLive=false;});
+  },
+  _tileKey(c){return c.z+'/'+c.x+'/'+c.y;},
+  async _featuresFor(c,box){
+    if(c.z<(this.options.minZoom||0))return[];
+    const grid=this.options.sourceGrid||14;
+    const win={x0:lvLon2x(box.west,grid),x1:lvLon2x(box.east,grid),
+      y0:lvLat2y(box.north,grid),y1:lvLat2y(box.south,grid)};
+    const req=[];for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)
+      req.push(this.options.loadTile(x,y));
+    const fcs=await Promise.all(req),seen=new Set(),out=[];
+    for(const fc of fcs)for(const f of (fc&&fc.features)||[]){
+      const id=f.id!=null?String(f.id):null;if(id&&seen.has(id))continue;if(id)seen.add(id);
+      if(!boxesMeet(featureBox(f),box))continue;
+      const picked=this.options.select?this.options.select(f):[f];
+      const chosen=Array.isArray(picked)?picked:(picked?[f]:[]);
+      for(const q of chosen)if(boxesMeet(featureBox(q),box))out.push(q);
+    }
+    return out;
+  },
+  _draw(canvas,c,features){
+    const size=this.getTileSize().x||256,dpr=Math.min(2,(typeof window!=='undefined'&&window.devicePixelRatio)||1);
+    canvas.width=size*dpr;canvas.height=size*dpr;canvas.style.width=size+'px';canvas.style.height=size+'px';
+    const ctx=canvas.getContext('2d');if(!ctx)return;
+    ctx.scale(dpr,dpr);const ox=c.x*size,oy=c.y*size,groups=new Map(),points=[];
+    for(const f of features){
+      const s=typeof this.options.featureStyle==='function'?this.options.featureStyle(f):(this.options.featureStyle||{});
+      if(!s||s.opacity===0)continue;
+      if((f.geometry||{}).type==='Point'){points.push({f,s});continue;}
+      const dash=canvasDash(s.dashArray),key=[s.color||'#999',s.weight||1,s.opacity==null?1:s.opacity,dash.join(','),s.lineCap||'round',s.lineJoin||'round'].join('|');
+      if(!groups.has(key))groups.set(key,{s,dash,features:[]});groups.get(key).features.push(f);
+    }
+    for(const {s,dash,features:fs} of groups.values()){
+      ctx.save();ctx.beginPath();ctx.strokeStyle=s.color||'#999';ctx.globalAlpha=s.opacity==null?1:s.opacity;
+      ctx.lineWidth=s.weight||1;ctx.lineCap=s.lineCap||'round';ctx.lineJoin=s.lineJoin||'round';ctx.setLineDash(dash);
+      for(const f of fs)for(const line of geometryLines(f.geometry)){
+        let first=true;for(const coord of line){const p=mercatorPixel(coord,c.z),x=p.x-ox,y=p.y-oy;
+          if(first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);}
+      }
+      ctx.stroke();ctx.restore();
+    }
+    for(const {f,s} of points){const p=mercatorPixel(f.geometry.coordinates,c.z),r=s.radius||3;
+      ctx.save();ctx.globalAlpha=s.fillOpacity==null?(s.opacity==null?1:s.opacity):s.fillOpacity;
+      ctx.beginPath();ctx.arc(p.x-ox,p.y-oy,r,0,Math.PI*2);ctx.fillStyle=s.fillColor||s.color||'#999';ctx.fill();
+      if(s.weight){ctx.globalAlpha=s.opacity==null?1:s.opacity;ctx.lineWidth=s.weight;ctx.strokeStyle=s.color||'#fff';ctx.stroke();}ctx.restore();}
+  },
+  createTile(c,done){
+    const canvas=document.createElement('canvas');canvas.className='leaflet-tile mim-vector-tile';canvas._mimLive=true;
+    const box=displayTileBounds(c);
+    this._featuresFor(c,box).then(features=>{
+      if(!canvas._mimLive)return done(null,canvas);canvas._mimFeatures=features;this._draw(canvas,c,features);
+      this._featureTiles.set(this._tileKey(c),{coords:{x:c.x,y:c.y,z:c.z},features});done(null,canvas);
+    }).catch(err=>{console.error('Vector tile render failed',err);done(null,canvas);});
+    return canvas;
+  },
+  query(latlng){
+    if(!this._map||this._map.getZoom()<(this.options.minZoom||0))return null;
+    const z=Math.round(this._map.getZoom()),p=mercatorPixel([latlng.lng,latlng.lat],z);
+    let best=null;const seen=new Set();
+    for(const rec of this._featureTiles.values()){
+      if(rec.coords.z!==z)continue;
+      for(const f of rec.features){const id=f.id!=null?String(f.id):f;if(seen.has(id))continue;seen.add(id);
+        const s=typeof this.options.featureStyle==='function'?this.options.featureStyle(f):(this.options.featureStyle||{});
+        let d2=Infinity;if((f.geometry||{}).type==='Point'){
+          const q=mercatorPixel(f.geometry.coordinates,z);d2=(p.x-q.x)**2+(p.y-q.y)**2;
+        }else for(const line of geometryLines(f.geometry))for(let i=1;i<line.length;i++)
+          d2=Math.min(d2,segmentDistanceSq(p,mercatorPixel(line[i-1],z),mercatorPixel(line[i],z)));
+        const tol=Math.max(7,(s&&s.weight||1)+4);if(d2<=tol*tol&&(!best||d2<best.distanceSq))best={feature:f,distanceSq:d2};
+      }
+    }
+    return best;
+  }
+});
+function jsonCanvasGrid(options){
+  const grid=new JsonCanvasGrid(Object.assign({tileSize:256,noWrap:true,updateWhenZooming:false,
+    updateInterval:180,keepBuffer:1},options));denseCanvasLayers.push(grid);return grid;
+}
+map.on('click',e=>{
+  let best=null;
+  for(const layer of denseCanvasLayers){if(!map.hasLayer(layer))continue;const hit=layer.query(e.latlng);if(!hit)continue;
+    const score=hit.distanceSq-(layer.options.hitPriority||0);if(!best||score<best.score)best={layer,hit,score};}
+  if(best&&best.layer.options.onFeatureClick)best.layer.options.onFeatureClick(best.hit.feature,e);
+});
+const LV_GRID=14, LV_MINZOOM=16;
 const LV_PLAIN='#22B8D9';                  // default: cables in one colour
 let lvByCapacity=true;                      // toggle: colour cables by RAG capacity (default on)
 function lvCableStyle(f){return{color:lvByCapacity?(RAGC[f.properties.rag]||RAGC.x):LV_PLAIN,
   weight:W(1.35),opacity:.9,lineCap:'round'};}
-function setLvCapacity(on){lvByCapacity=on; if(lvCableLayer)lvCableLayer.setStyle(lvCableStyle);}
-const lvTileCache=new Map();
-let lvCableLayer=null, lvRenderToken=0, lvLastWindow=null;
 function lvCablePopup(e,p){
   L.popup({className:'tt'}).setLatLng(e.latlng).setContent(card({
     color:lvByCapacity?(RAGC[p.rag]||RAGC.x):LV_PLAIN, icon:ICON.lv,
@@ -853,44 +986,10 @@ function lvCablePopup(e,p){
     rows:rowsOf([['cable',p.type],['voltage',(p.v||230)+' V'],['capacity',RAGT[p.rag]||RAGT.x]]),
     lat:e.latlng.lat, lon:e.latlng.lng})).openOn(map);
 }
-async function lvFetchTile(x,y){
-  const k=x+'/'+y;
-  if(lvTileCache.has(k)){const v=lvTileCache.get(k);lvTileCache.delete(k);lvTileCache.set(k,v);return v;}
-  let fc={features:[]};
-  try{const r=await fetch('tiles/lvgeo/'+x+'/'+y+'.json');if(r.ok)fc=await r.json();}catch(e){}
-  lvTileCache.set(k,fc);
-  while(lvTileCache.size>LV_MAXCACHE)lvTileCache.delete(lvTileCache.keys().next().value);
-  return fc;
-}
-async function renderLvCables(){
-  if(!map.hasLayer(lvNetwork)||map.getZoom()<LV_MINZOOM){
-    if(lvCableLayer&&lvCableLayer.getLayers().length)lvCableLayer.clearLayers();
-    lvLastWindow=null; return;
-  }
-  const token=++lvRenderToken;
-  const b=map.getBounds().pad(0.2), z=LV_GRID;
-  const win=dataWindow(b,z);
-  // Zooming in usually asks for a subset of the window already on the canvas.
-  // Keep it: rebuilding thousands of identical paths just because the viewport
-  // got smaller was the largest source of post-zoom stalls.
-  if(windowCovers(lvLastWindow,win)&&lvCableLayer)return;
-  const reqs=[]; for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(lvFetchTile(x,y));
-  const fcs=await Promise.all(reqs);
-  if(token!==lvRenderToken) return;            // a newer render superseded this one
-  const seen=new Set(), feats=[];
-  for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
-  if(!lvCableLayer){
-    const renderer=vectorCanvas();
-    lvCableLayer=L.geoJSON(null,{
-      renderer,
-      style:lvCableStyle,
-      onEachFeature:(f,l)=>l.on('click',e=>lvCablePopup(e,f.properties))});
-    lvNetwork.addLayer(lvCableLayer);
-  }
-  lvLastWindow=win;
-  lvCableLayer.clearLayers();
-  lvCableLayer.addData({type:'FeatureCollection',features:feats});
-}
+const lvCableLayer=jsonCanvasGrid({sourceGrid:LV_GRID,minZoom:LV_MINZOOM,
+  loadTile:(x,y)=>fetchTileJSON('tiles/lvgeo/'+x+'/'+y+'.json'),featureStyle:lvCableStyle,
+  hitPriority:1,onFeatureClick:(f,e)=>lvCablePopup(e,f.properties||{})});
+function setLvCapacity(on){lvByCapacity=on;lvCableLayer.redraw();}
 
 // Transformers: fixed-size, always-clickable markers. Only the in-view ones exist.
 const lvTx=L.layerGroup(),lvTxRenderer=vectorCanvas();
@@ -929,11 +1028,10 @@ function syncLvTx(){
     lvTxData=fc;lvTxIndex=indexLvTx(fc);lvTxLoading=false;renderLvTx();
   }).catch(()=>{lvTxLoading=false;});
 }
-function syncLv(){ syncLvTx(); renderLvCables(); updateLvHint(); }
-const lvNetwork=L.layerGroup([lvTx]);   // cables added lazily into it by renderLvCables
+function syncLv(){ syncLvTx(); updateLvHint(); }
+const lvNetwork=L.layerGroup([lvCableLayer,lvTx]);
 lvNetwork.on('add',syncLv);
-lvNetwork.on('remove',()=>{ lvTx.clearLayers(); lvTxWindow=null;
-  lvLastWindow=null; if(lvCableLayer)lvCableLayer.clearLayers(); updateLvHint(); });
+lvNetwork.on('remove',()=>{lvTx.clearLayers();lvTxWindow=null;updateLvHint();});
 // ---- Cadent gas distribution network -----------------------------------------
 // Cadent "Gas Pipe Infrastructure - GPI Open" (Open Government Licence v3.0),
 // kept local as z14 GeoJSON tiles exactly like the LV cables. Two viewport-
@@ -979,7 +1077,7 @@ const GAS_MAT={CI:'Cast iron',DI:'Ductile iron',PE:'Polyethylene',SI:'Spun iron'
 const GAS_TYPE={m:'Gas main',s:'Gas service pipe',r:'Gas riser',
                 n:'NTS transmission pipe',l:'LTS transmission pipe',u:'Gas pipe'};
 const GAS_DU={MM:'mm',I:'in',UN:''};
-const GAS_GRID=14, GAS_MAXCACHE=80;
+const GAS_GRID=14;
 // Services were gated at z17 with nothing to say so: switch them on any wider
 // out and the layer silently drew nothing, which reads as broken rather than as
 // zoomed out. z16 matches the LV cables, and hintText() now names them.
@@ -1027,8 +1125,7 @@ function gasPopup(e,p){
                  ['position',p.ag?'above ground':'below ground']]),
     lat:e.latlng.lat, lon:e.latlng.lng})).openOn(map);
 }
-// One viewport-windowed tile layer per tree; identical machinery to the LV cables.
-const gasRenders=[];
+// One canvas-grid layer per tree; identical machinery to the LV cables.
 // Where the MAPS extract has data it is the better source - surveyed, with real
 // diameter/material and a full pressure split - so the open-data mains are
 // clipped OUT of its envelope rather than drawn underneath it. That keeps a
@@ -1081,45 +1178,16 @@ function clipOutsideMaps(f){
 // true/false as a filter, or be omitted. The open-data mains are split across
 // four pressure toggles over the same tiles, hence the shared URL-keyed cache.
 function gasTileLayer(dir,minzoom,select){
-  const group=L.layerGroup();
-  layerMinZoom.set(group,minzoom);
-  let layer=null,token=0,lastWindow=null;
-  const tile=(x,y)=>fetchTileJSON('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json');
-  async function render(){
-    if(!map.hasLayer(group)||map.getZoom()<minzoom){
-      if(layer&&layer.getLayers().length)layer.clearLayers();lastWindow=null;return;}
-    const t=++token;
-    const b=map.getBounds().pad(0.2), z=GAS_GRID;
-    const win=dataWindow(b,z);
-    if(windowCovers(lastWindow,win)&&layer)return;
-    const reqs=[];for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(tile(x,y));
-    const fcs=await Promise.all(reqs);
-    if(t!==token) return;                        // a newer render superseded this one
-    const seen=new Set(), feats=[];
-    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id);
-      const picked=select?select(f):[f];
-      if(Array.isArray(picked))feats.push(...picked); else if(picked)feats.push(f); }
-    if(!layer){
-      const renderer=vectorCanvas();
-      layer=L.geoJSON(null,{
-        renderer,
-        style:gasStyle,
-        onEachFeature:(f,l)=>l.on('click',e=>gasPopup(e,f.properties))});
-      group.addLayer(layer);
-    }
-    lastWindow=win;
-    layer.clearLayers();
-    layer.addData({type:'FeatureCollection',features:feats});
-  }
-  gasRenders.push(render);
-  gasRestyle.push(()=>{ if(layer) layer.setStyle(gasStyle); });
-  group.on('add',()=>{render();updateLvHint();});
-  group.on('remove',()=>{lastWindow=null;if(layer)layer.clearLayers();updateLvHint();});
-  return group;
+  const grid=jsonCanvasGrid({sourceGrid:GAS_GRID,minZoom:minzoom,
+    loadTile:(x,y)=>fetchTileJSON('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json'),
+    select,featureStyle:gasStyle,hitPriority:2,
+    onFeatureClick:(f,e)=>gasPopup(e,f.properties||{})});
+  layerMinZoom.set(grid,minzoom);gasRestyle.push(()=>grid.redraw());
+  grid.on('add remove',updateLvHint);return grid;
 }
 // (the open-data mains are built per pressure tier further down, by cadentTier)
 const gasSvc=gasTileLayer('svc',GAS_SVC_MINZOOM);
-function syncGas(){ for(const r of gasRenders) r(); }
+function syncGas(){}
 
 // ---- Cadent above-ground gas assets ------------------------------------------
 // Two more OGL v3.0 datasets, small enough (~1.4k + ~270 in region) to commit
@@ -1154,7 +1222,10 @@ function lazyGeoJSON(url, opts){
   group.on('add',()=>{
     if(state!=='idle') return; state='loading';
     fetch(url).then(r=>r.ok?r.json():{features:[]})
-      .then(fc=>{ group.addLayer(L.geoJSON(transform?transform(fc):fc,gjOpts)); state='loaded'; })
+      .then(fc=>{ group.addLayer(L.geoJSON(transform?transform(fc):fc,gjOpts)); state='loaded';
+        // Lazy sources may contribute labels. Invalidate after their features
+        // arrive, not when the still-empty wrapper is first switched on.
+        labelVer++;scheduleLabels(20); })
       // a missing file already degrades to empty above, so reaching here means a
       // network or render fault: reset so a later toggle retries, but say so
       // rather than failing silently
@@ -1218,10 +1289,6 @@ const gasAgSitesMaps=lazyGeoJSON('tiles/mapsgeo/agi.geojson',{
     color:GAS_AG_COL,weight:2.4,fillColor:'#fff',fillOpacity:.96}),
   onEachFeature:(f,l)=>{
     const p=f.properties||{};
-    // A new MAPS site is labelled on its dot. An overlapping site has Cadent's
-    // dot and MAPS' boundary, so its one label belongs to that boundary.
-    if(p.label&&(f.geometry.type==='Point'||p.also_in_cadent))
-      l.bindTooltip(p.label,{permanent:true,direction:'top',className:'sitelbl',offset:[0,-4]});
     l.on('click',e=>{
       const ll=e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter();
       L.popup({className:'tt'}).setLatLng(ll).setContent(card({
@@ -1234,15 +1301,6 @@ const gasAgSitesMaps=lazyGeoJSON('tiles/mapsgeo/agi.geojson',{
   }
 });
 const gasAgSites=L.layerGroup([gasAgSitesCadent,gasAgSitesMaps]);
-// Permanent labels are only readable close in, so they are CSS-gated on a class
-// the map container carries from zoom 17 rather than bound and unbound per pan.
-const LABEL_MINZOOM=17;
-function syncLabels(){
-  const c = map.getContainer && map.getContainer();
-  if(c && c.classList) c.classList.toggle('showlbl', map.getZoom()>=LABEL_MINZOOM);
-}
-map.on('zoomend',syncLabels);
-syncLabels();   // the opening view may already be zoomed in
 const gasAgPipes=lazyGeoJSON('gas_ag_pipes.geojson',{
   // solid and heavier than the buried mains: these genuinely are overground,
   // which is exactly what the map's solid/dashed convention means
@@ -1323,7 +1381,6 @@ function localPopup(spec,f,ll,note){
 // tree and says so in the manifest (tiles/grid/minzoom). This is the same
 // viewport-windowed pattern as the gas and LV tile trees; the grid zoom is
 // per-layer because a dense LP tier needs finer tiles than an HP one.
-const localRenders=[];   // moveend hooks, one per tiled local layer
 const localGated=[];     // {layer,minzoom,label} - feeds the zoom hint
 const gasGated=[];       // {layer,label} for the pressure toggles - same hint
 const localTiers=new Set();  // pressure tiers an overlay supplies; drives the legend
@@ -1335,52 +1392,30 @@ const localTiers=new Set();  // pressure tiers an overlay supplies; drives the l
 const tileCache=new Map(); const TILE_MAXCACHE=260;
 async function fetchTileJSON(url){
   if(tileCache.has(url)){const v=tileCache.get(url);tileCache.delete(url);tileCache.set(url,v);return v;}
-  let fc={features:[]};
-  try{const r=await fetch(url);if(r.ok)fc=await r.json();}catch(e){}
-  tileCache.set(url,fc);
+  // Cache the in-flight promise immediately. Several pressure layers can need
+  // the same source tile in the same frame; this keeps that to one request and
+  // one JSON parse instead of a small thundering herd.
+  const pending=(async()=>{try{const r=await fetch(url);if(r.ok)return await r.json();}catch(e){}
+    return{features:[]};})();
+  tileCache.set(url,pending);
   while(tileCache.size>TILE_MAXCACHE)tileCache.delete(tileCache.keys().next().value);
-  return fc;
+  const fc=await pending;if(tileCache.get(url)===pending)tileCache.set(url,fc);return fc;
 }
 function localTileLayer(spec,style,base,o){
   const {note=null,filter=null,gated=true}=o||{};
-  const group=L.layerGroup();
   const grid=spec.grid||14, minz=spec.minzoom||14;
-  layerMinZoom.set(group,minz);
-  let gj=null,lastWindow=null,token=0;
-  const tile=(x,y)=>fetchTileJSON(base+spec.tiles+'/'+x+'/'+y+'.json');
-  async function render(){
-    if(!map.hasLayer(group)||map.getZoom()<minz){
-      if(gj&&gj.getLayers().length)gj.clearLayers();lastWindow=null;return;}
-    const t=++token, b=map.getBounds().pad(0.2);
-    const win=dataWindow(b,grid);
-    if(windowCovers(lastWindow,win)&&gj)return;
-    const reqs=[];for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(tile(x,y));
-    const fcs=await Promise.all(reqs);
-    if(t!==token) return;                      // a newer render superseded this one
-    const seen=new Set(), feats=[];
-    for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id);
-      if(filter&&!filter(f))continue; feats.push(f); }
-    if(!gj){
-      const renderer=vectorCanvas();
-      gj=L.geoJSON(null,{renderer,style,
-        pointToLayer:(f,ll)=>L.circleMarker(ll,{renderer,radius:3,color:'#fff',weight:1,fillColor:style(f).color,fillOpacity:.95}),
-        onEachFeature:(f,l)=>l.on('click',e=>localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),note))});
-      group.addLayer(gj);
-    }
-    lastWindow=win;
-    gj.clearLayers();
-    gj.addData({type:'FeatureCollection',features:feats});
-  }
-  localRenders.push(render);
+  const layer=jsonCanvasGrid({sourceGrid:grid,minZoom:minz,
+    loadTile:(x,y)=>fetchTileJSON(base+spec.tiles+'/'+x+'/'+y+'.json'),
+    select:filter?(f=>filter(f)):null,featureStyle:style,hitPriority:3,
+    onFeatureClick:(f,e)=>localPopup(spec,f,e.latlng,note)});
+  layerMinZoom.set(layer,minz);
   // MAPS tiers opt out of the hint: they sit inside one toggle at staggered
   // zooms on purpose (HP spine wide, LP only close in), so "zoom in to see the
   // LP" would be nagging about intended behaviour, not reporting a fault.
-  if(gated) localGated.push({layer:group,minzoom:minz,label:spec.label||'gas layer'});
-  group.on('add',()=>{render();updateLvHint();});
-  group.on('remove',()=>{if(gj)gj.clearLayers();lastWindow=null;updateLvHint();});
-  return group;
+  if(gated) localGated.push({layer,minzoom:minz,label:spec.label||'gas layer'});
+  layer.on('add remove',updateLvHint);return layer;
 }
-function syncLocal(){ for(const r of localRenders) r(); }
+function syncLocal(){}
 
 // One builder for a manifest of pressure-tier layers, used twice:
 //   tiles/mapsgeo/meta.json - the committed MAPS extract, always present, loads
@@ -1610,6 +1645,13 @@ function siteLabelOf(cat){
             pri:(line?150:320), minz:line?13:12, gap:line?5:7};
   };
 }
+function agiLabelOf(f){
+  const p=f.properties||{},t=(f.geometry&&f.geometry.type)||'';
+  // A new bounded site is labelled on its synthetic centre dot. Where Cadent
+  // already supplies the dot, MAPS' surveyed outline carries the one label.
+  if(!p.label||(!/Point/.test(t)&&!p.also_in_cadent))return null;
+  return{name:p.label,sub:'AGI',cls:'mlab agi',pri:720,minz:17,gap:7};
+}
 function registerLabels(layer, of){ if(layer&&of) labelSources.push({layer, of, cache:null, ver:-1}); }
 
 // Descriptors are cached per source layer: the anchors and the text are static,
@@ -1617,14 +1659,18 @@ function registerLabels(layer, of){ if(layer&&of) labelSources.push({layer, of, 
 function descriptorsFor(src){
   if(src.cache && src.ver===labelVer) return src.cache;
   const out=[];
-  src.layer.eachLayer(l=>{
+  const visit=l=>{
+    // Lazy wrappers contain a GeoJSON layer rather than feature layers directly.
+    // Walk through it so labels are still indexed from the actual features.
+    if(!l.feature&&l.eachLayer){l.eachLayer(visit);return;}
     const f=l.feature; if(!f) return;
     const d=src.of(f,l); if(!d||!d.name) return;
     let ll=(l.getLatLng&&l.getLatLng());
     if(!ll&&l.getCenter){ try{ ll=l.getCenter(); }catch(e){} }
     if(!ll&&l.getBounds){ try{ ll=l.getBounds().getCenter(); }catch(e){} }
     if(ll) out.push(Object.assign({ll},d));
-  });
+  };
+  src.layer.eachLayer(visit);
   src.cache=out; src.ver=labelVer; return out;
 }
 
@@ -1775,12 +1821,14 @@ function setLabels(on){
 // reveal it only once every label is in its final place.
 map.on('zoomstart',()=>{
   _zooming=true;clearTimeout(_mvT);
+  const c=map.getContainer&&map.getContainer();if(c&&c.classList)c.classList.add('map-is-zooming');
   if(labelPane)labelPane.style.visibility='hidden';
 });
 // A zoom change alters every stroke weight and every label gate, so both have to
 // re-run; regrade() first, since the labels measure the marker radii it sets.
 map.on('zoomend',()=>{
-  _zooming=false;regrade();scheduleViewportSync(70);
+  _zooming=false;const c=map.getContainer&&map.getContainer();if(c&&c.classList)c.classList.remove('map-is-zooming');
+  regrade();scheduleViewportSync(70);
 });
 
 // ============================================================================
@@ -2264,6 +2312,7 @@ async function initData(fc){
   // ---- labels: register every layer that has names worth drawing ----
   registerLabels(sub['power.hv'], hvLabelOf);
   registerLabels(sub['power.ps'], psLabelOf);
+  registerLabels(gasAgSitesMaps, agiLabelOf);
   ['water.site','sewage.site','fuel.tank','gas.hold','water.pipe','fuel.pipe','gas.pipe','sewage.pipe']
     .forEach(k => registerLabels(sub[k], siteLabelOf(k.split('.')[0])));
 
