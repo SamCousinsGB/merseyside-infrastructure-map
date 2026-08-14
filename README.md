@@ -1,6 +1,6 @@
 # Merseyside & North Wales infrastructure map
 
-An interactive Leaflet map of utility and transport infrastructure across the
+An interactive MapLibre GL map of utility and transport infrastructure across the
 SP Manweb region (Merseyside, Wirral, Cheshire and North Wales), built from
 OpenStreetMap-derived data.
 
@@ -108,9 +108,10 @@ gives the infrastructure a quiet canvas and still lets the place names read.
 The **LV network** is the real distribution low-voltage network from SP Energy
 Networks (not OSM). Transformers appear from zoom 15 and cables from **zoom 16**
 (street level) — there is far too much to show region-wide. The ~1.47M source
-cable segments are merged into continuous polylines and painted into batched
-canvas tiles for the current viewport, so they stay crisp without creating one
-Leaflet object per cable. Cables are shaded by capacity headroom (**green** = spare, **amber** =
+cable segments are merged into continuous polylines and published as protobuf
+vector tiles. MapLibre decodes them in workers and draws them in one WebGL
+canvas, so they stay crisp without creating a browser object per cable. Cables
+are shaded by capacity headroom (**green** = spare, **amber** =
 limited, **red** = at/near capacity, **grey** = not assessed); switch
 **"Colour cables by capacity"** off to draw them all in one colour instead.
 Transformers are yellow markers. Click a transformer for "LV transformer" + its
@@ -247,52 +248,51 @@ inlet is exactly the tier the open data omits.
 
 ## Rebuilding
 
-`index.html` loads the OSM-derived layer data from `data.json` at runtime; the LV
-and gas networks read committed GeoJSON tiles under `tiles/lvgeo/`,
-`tiles/gasgeo/` and `lv_transformers.geojson` (transformers). Smoke-test the page
+`index.html` loads the modest OSM-derived layer data from `data.json` at runtime.
+The dense LV and gas networks read prebuilt protobuf tiles from `tiles/mvt/`;
+the source GeoJSON tile trees remain under `tiles/lvgeo/`, `tiles/gasgeo/` and
+`tiles/mapsgeo/` so the binary output can be rebuilt. Smoke-test the page
 after any edit:
 
 ```bash
 node test_map.js index.html  # runs the page JS against the real committed data
 ```
 
-The dense networks use a custom `L.GridLayer`: each visible screen tile is one
-canvas, features are batched by style, and one map-level hit test keeps pipe and
-cable popups working. Zooming therefore transforms a small set of completed tile
-canvases instead of rebuilding thousands of `L.Polyline` objects. In-flight tile
-fetches are shared across pressure layers.
+The dense networks are standard Mapbox Vector Tiles. MapLibre keeps one WebGL
+canvas, decodes small binary tiles off the main thread, performs labels and
+collision detection natively, and uses GPU feature picking for popups. Zooming
+does not stitch viewport GeoJSON, recreate paths or mount feature DOM nodes.
 
-The test mocks just enough Leaflet and DOM to execute the page, resolves its
-`fetch()`es against the real files on disk, and pretends every layer is on at
-street zoom — so the tile render paths and their style/popup callbacks actually
-run. It fails if the page reports an error or draws nothing. Set `ZOOM=n` to
-check a different band (e.g. `ZOOM=13` should fetch MAPS IP/MP tiles but no
-street-level LV, gas services or low-pressure tiles).
+The test syntax-checks the production application, validates the committed JSON
+sources, decodes representative protobuf tiles, checks every tile tree has its
+expected scale and verifies known MAPS/Cadent records retained their popup
+properties. Browser checks cover real WebGL rendering, zooming and feature
+picking.
 
 > **`final_map.py` is stale.** It still carries the older template that inlined
-> the feature data (`const data=__DATA__`), whereas the deployed `index.html` has
-> since moved to async `fetch('data.json')` + `initData()`. It also needs source
+> the feature data and generated a Leaflet page, whereas the deployed
+> `index.html` is now a MapLibre/WebGL application backed by protobuf tiles. It also needs source
 > inputs that are git-ignored, so it will not run from a fresh clone. **Edit
-> `index.html` directly** — it is the file that ships. Gas-layer changes were
-> applied to both to stop the two drifting further apart, but the styling and
-> labelling rewrite described in [Reading the map](#reading-the-map) exists only
-> in `index.html`; the two files are not interchangeable.
+> `index.html` directly** — it is the file that ships. The two files are not
+> interchangeable.
 
 ### LV network tiles
 Built once from SP Energy Networks' public ConnectMore WFS and committed, so the
-live map never depends on their server. Node only — no npm deps, no Python/GDAL:
+live map never depends on their server. Node only, no Python/GDAL:
 
 ```bash
 node fetch_lv.mjs --out=lv_cables.geojson --tx=lv_transformers.geojson  # WFS download
 node merge_lv.mjs lv_cables.geojson lv_cables_merged.geojson            # ~1.47M segments -> ~310k polylines
 node build_lv_geojson_tiles.mjs lv_cables_merged.geojson tiles/lvgeo    # bin into z14 GeoJSON cells
+npm run build-mvt                                                        # compile browser vector tiles
 ```
 
 `fetch_lv.mjs` downloads the region over a grid of WFS bbox requests (raw cable
 GeoJSON is git-ignored). `merge_lv.mjs` chains the ~2 m segments into continuous
 polylines per (capacity, cable type, voltage). `build_lv_geojson_tiles.mjs` bins
-them into `tiles/lvgeo/{x}/{y}.json` on a zoom-14 grid; at runtime the map fetches
-only the cells in view and batches them into crisp screen-tile canvases.
+them into `tiles/lvgeo/{x}/{y}.json` on a zoom-14 grid. `build_mvt_tiles.mjs`
+then compiles those cells and the transformer points into compact protobuf tiles
+under `tiles/mvt/`; the browser overzooms the z14 geometry without losing detail.
 
 ### Cadent gas network tiles
 Same shape as the LV build, from Cadent's open data portal. The licence is open
@@ -311,6 +311,7 @@ any error output. Then:
 node fetch_gas.mjs --out=gas_pipes.geojson                      # bbox-gridded download
 node merge_gas.mjs gas_pipes.geojson gas_pipes_merged.geojson   # chain pipes into polylines
 node build_gas_tiles.mjs gas_pipes_merged.geojson tiles/gasgeo  # bin into z14 cells
+npm run build-mvt                                               # compile browser vector tiles
 ```
 
 `fetch_gas.mjs` walks the region as a grid, **counting each cell first** and
@@ -346,6 +347,7 @@ not distinguish. Rebuild:
 
 ```bash
 node build_maps_mvf.mjs --src="C:/path/to/MapsViewerJuly2026"
+npm run build-mvt
 ```
 
 or put the path in `local/mvf.config.json` (git-ignored, since it is
@@ -369,11 +371,12 @@ data over central Liverpool the median disagreement is **0.3 m**, p90 0.6 m.
 Fine for an overlay — **not survey grade, and not a substitute for a LineSearch
 enquiry before anyone digs.**
 
-Dense tiers are written as tile trees rather than single files (456k LP features
+Dense tiers are written as tile trees rather than single files (848k LP features
 is not a fetch a browser survives) on a **per-tier grid** — LP on z16, MP on z15,
 which caps the worst tile at 154 KB instead of 1.5 MB. `tiles/mapsgeo/meta.json`
 tells the map which tiers exist, how they are stored and what zoom each starts
-at; adding a tier needs no change to `index.html`.
+at. `npm run build-mvt` compiles IP/MP/LP into zoom-appropriate protobuf
+pyramids (z12–14, z13–15 and z15–16 respectively) for the production renderer.
 
 ### Source data
 - `spen_complete_revert.geojson`, `current_power.geojson` — `power=*` features
@@ -384,6 +387,8 @@ at; adding a tier needs no change to `index.html`.
   Networks ConnectMore (`connectmore-costestimator:lv_cables_map_view`, `lv_transformers_map_view`)
 - `tiles/gasgeo/` — Cadent gas mains + service pipes, from the Cadent open data
   portal (`gas-pipe-infrastructure-gpi_open`)
+- `tiles/mvt/` — generated browser-ready protobuf tiles for LV, transformers,
+  MAPS pressure tiers and Cadent mains/services
 - `gas_ag_sites.geojson`, `gas_ag_pipes.geojson` — Cadent above-ground sites and
   pipes (`above-ground-infrastructure-assets-open`, `agp-above-ground-pipes-open`)
 - `gas_transmission.geojson` — high-pressure transmission pipelines from OSM
@@ -392,30 +397,17 @@ at; adding a tier needs no change to `index.html`.
   farms, gas holders, power stations, chimneys, weirs), fetched at runtime and
   merged into the layers. Rebuild: `node fetch_extra.mjs` then `node build_extra.mjs`
 
-## Private, local-only overlays
+## Local viewing and rebuilds
 
-The map can show extra layers that exist **only on your machine** and are never
-published. Everything under `local/` is git-ignored (except its README and an
-example manifest), so it cannot reach the public GitHub Pages deploy — there the
-manifest simply 404s and no local layer is added, not even a toggle.
+Double-click `setup.bat` to serve the already-built production page and open it.
+Normal startup performs no extraction or conversion. After deliberately changing
+the committed GeoJSON source tiles, run `setup.bat --rebuild` (or `npm install`
+then `npm run build-mvt`) to regenerate `tiles/mvt/` before testing.
 
-This is for data you are licensed to *view* but not to *republish*. Note that
-the MAPS Viewer pressure tiers are **not** here — they are committed under
-`tiles/mapsgeo/` and load like any other layer. `local/` is for anything you
-want kept out of the repo entirely.
-
-Drop WGS84 GeoJSON into `local/source/` and run `node build_gas_local.mjs` (or
-double-click `setup.bat`); it classifies by pressure and emits colour-coded
-layers, tiling any too big to fetch whole. Or hand-write `local/manifest.json`
-from `local/manifest.example.json`. Both use the same layer format the committed
-`tiles/mapsgeo/meta.json` does, so a tier can move between them without a code
-change. See [`local/README.md`](local/README.md) for the format.
-
-Nothing here downloads anything. If a dataset's licence forbids publication,
-keeping it in `local/` guarantees this repo never carries it — but that is a
-technical guarantee about the *repo*, not a licence to hold or share the data,
-and it is only as good as the choice to put the data there rather than in
-`tiles/`.
+`local/` remains git-ignored and the older classification tools remain available
+as preprocessing utilities, but the production WebGL page does not read
+`local/manifest.json`. See [`local/README.md`](local/README.md) before using that
+workspace.
 
 ## Notes & caveats
 - **Sewers are not mapped** — they are essentially absent from OpenStreetMap

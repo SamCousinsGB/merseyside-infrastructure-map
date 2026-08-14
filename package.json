@@ -1,7 +1,7 @@
 {
   "name": "merseyside-infrastructure-map-build",
   "private": true,
-  "description": "Build-time tooling only (Node, no deps). The published map (index.html) loads its libraries from a CDN and needs none of this at runtime. Build scripts use the .mjs extension so they run as ES modules without a package-level \"type\".",
+  "description": "Build-time tooling for the static MapLibre map. Runtime libraries load from a CDN; Node dependencies compile GeoJSON into protobuf vector tiles.",
   "scripts": {
     "fetch-lv": "node --max-old-space-size=8192 fetch_lv.mjs",
     "merge-lv": "node --max-old-space-size=10240 merge_lv.mjs",
@@ -11,6 +11,11 @@
     "fetch-gas-transmission": "node fetch_gas_transmission.mjs",
     "merge-gas": "node --max-old-space-size=10240 merge_gas.mjs",
     "build-gas-tiles": "node --max-old-space-size=10240 build_gas_tiles.mjs",
+    "build-mvt": "node --max-old-space-size=8192 build_mvt_tiles.mjs",
     "test": "node test_map.js index.html"
+  },
+  "devDependencies": {
+    "geojson-vt": "^4.0.3",
+    "vt-pbf": "^3.1.3"
   }
 }
