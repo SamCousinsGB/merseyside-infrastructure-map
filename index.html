@@ -21,9 +21,14 @@
   --halo:#fff;                 /* label halo; flipped on dark basemaps */
 }
 html,body,#map{height:100%;margin:0}
-#map{width:100%;background:#eef2f6}
+#map{width:100%;background:#eef2f6;contain:strict}
 .leaflet-control-layers{display:none}
 .leaflet-container{font-family:var(--font)}
+/* Keep Leaflet's zooming tiles/canvases on compositor layers. This avoids a
+   full page paint while their transform is animated. */
+.leaflet-map-pane,.leaflet-tile-container,.leaflet-pane canvas{
+  will-change:transform,opacity;backface-visibility:hidden;
+}
 
 /* Dark basemaps: the page keeps its light chrome (cards stay white and
    legible) but anything drawn ON the tiles - label haloes, the graticule of
@@ -41,10 +46,10 @@ html,body,#map{height:100%;margin:0}
 .leaflet-bar a:last-child{border-bottom:none}
 .leaflet-bar a:hover{background:var(--sunk);color:var(--ink)}
 .leaflet-bar a.leaflet-disabled{color:#cbd5e1;background:var(--bg)}
-.leaflet-control-scale-line{border:none!important;border-radius:6px;background:rgba(255,255,255,.78);
-  backdrop-filter:blur(6px);color:var(--muted);font:600 10px/1.5 var(--font);padding:1px 6px;
+.leaflet-control-scale-line{border:none!important;border-radius:6px;background:rgba(255,255,255,.92);
+  color:var(--muted);font:600 10px/1.5 var(--font);padding:1px 6px;
   box-shadow:0 1px 3px rgba(15,23,42,.14)}
-.leaflet-control-attribution{background:rgba(255,255,255,.8)!important;backdrop-filter:blur(6px);
+.leaflet-control-attribution{background:rgba(255,255,255,.92)!important;
   border-radius:8px 0 0 0;color:var(--muted)!important;font:400 9.5px/1.5 var(--font);padding:2px 7px!important;
   max-width:min(72vw,700px)}
 .leaflet-control-attribution a{color:var(--muted)!important;text-decoration:none}
@@ -365,8 +370,14 @@ const PS_ICON={
 const CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 
 const map=L.map('map',{preferCanvas:true,maxZoom:19,zoomControl:false,
-                       zoomSnap:.5,wheelPxPerZoomLevel:110,zoomAnimation:true});
+                       zoomSnap:.5,wheelPxPerZoomLevel:110,zoomAnimation:true,
+                       fadeAnimation:true,markerZoomAnimation:true,
+                       wheelDebounceTime:45,bounceAtZoomLimits:false});
 L.control.zoom({position:'topleft'}).addTo(map);
+// Heavy independent overlays must not share Leaflet's default canvas: changing
+// one path on a shared renderer repaints every visible path from every layer.
+// One lightweight canvas per logical overlay confines redraws to that overlay.
+const vectorCanvas=()=>L.canvas({padding:.28,tolerance:5});
 
 // ---------------------------------------------------------------------------
 //  BASEMAPS. Place labels are drawn in their own pane ABOVE the data, which is
@@ -382,8 +393,9 @@ const baseLabelPane=map.createPane('baselabels');
 baseLabelPane.style.zIndex=620;
 baseLabelPane.style.pointerEvents='none';
 const CARTO_ATTR='&copy; <a href="https://carto.com/attributions">CARTO</a>';
-const tl=(url,o)=>L.tileLayer(url,Object.assign({pane:'ground',maxZoom:19,detectRetina:false},o));
-const labelTl=url=>L.tileLayer(url,{pane:'baselabels',maxZoom:19,attribution:CARTO_ATTR});
+const TILE_OPTS={maxZoom:19,detectRetina:false,updateWhenZooming:false,updateInterval:240,keepBuffer:3};
+const tl=(url,o)=>L.tileLayer(url,Object.assign({pane:'ground'},TILE_OPTS,o));
+const labelTl=url=>L.tileLayer(url,Object.assign({pane:'baselabels',attribution:CARTO_ATTR},TILE_OPTS));
 const bases={
   // "Clean": Carto Positron with the labels lifted over the data
   'Clean':L.layerGroup([
@@ -416,18 +428,16 @@ setBaseTheme(BASE_DEFAULT);
 L.control.scale({position:'bottomright',imperial:false,maxWidth:110}).addTo(map);
 
 // ---------------------------------------------------------------------------
-//  ZOOM-GRADED WEIGHT
-//  A line weight that looks right in a street is a solid blob across a region:
-//  the same 2.5px stroke drawn over eight times less geography stops being a
-//  line and becomes fill. Every base weight below is quoted for z13 and scaled
-//  from here. The scale is BANDED per integer zoom, and layers are only
-//  restyled when the band actually changes, so a pinch-zoom does not trigger a
-//  full canvas restyle on every frame.
+//  ZOOM-GRADED MARKERS, SCREEN-STABLE LINES
+//  Leaflet strokes are already measured in screen pixels. Keeping line weights
+//  stable avoids a full canvas restyle after every zoom; zMul is reserved for
+//  point hierarchy, visibility gates and station badges where zoom genuinely
+//  changes which information should be present.
 // ---------------------------------------------------------------------------
 const ZW={7:.40,8:.48,9:.58,10:.68,11:.80,12:.90,13:1,14:1.12,15:1.26,16:1.42,17:1.60,18:1.78,19:1.95};
 let zMul=1, zBand=0;
 function zoomMul(z){ const i=Math.round(z); return ZW[i]||(i<7?.34:2.1); }
-const W = b => Math.max(.45, Math.round(b*zMul*100)/100);
+const W = b => Math.max(.45, Math.round(b*100)/100);
 // Dashes have to scale with the stroke too, or a 4px line with a fixed 5/5 dash
 // renders as a row of beads rather than as a dashed line.
 const DASH = w => Math.max(3,w*2.7).toFixed(1)+' '+Math.max(2.4,w*2.1).toFixed(1);
@@ -508,7 +518,7 @@ function powerStyle(f){
           dashArray:p.ug?DASH(w):null};
 }
 
-// ---- everything that is not power: one colour per category, zoom-graded ----
+// ---- everything that is not power: one colour per category -----------------
 // Pipelines get a slightly heavier stroke than the sites they connect, and the
 // solid/dashed overground/underground convention is kept throughout.
 const CAT_W={fuel:2,gas:2,water:1.9,sewage:1.7,train:1.9,power:2};
@@ -544,7 +554,7 @@ function regrade(){
   zBand=b; zMul=zoomMul(z);
   for(const g of graded){
     if(!g.layer||!map.hasLayer(g.layer)) continue;   // off-map layers restyle when re-added
-    try{ g.layer.setStyle(g.cat==='power'?powerStyle:styleFor.bind(null,g.cat)); }catch(e){}
+    try{g.layer.setStyle(g.cat==='power'?powerStyle:styleFor.bind(null,g.cat));g.band=zBand;}catch(e){}
   }
   for(const fn of gradedHooks) fn();
 }
@@ -723,16 +733,18 @@ function subKeyFor(cat, f){
   return SUBKEYS[cat][SUBKEYS[cat].length-1];             // safety net (never hit: last is else)
 }
 
-// ---- factory: one sub-layer, zoom-graded, hover-aware ------------------------
+// ---- factory: one sub-layer, zoom-gated and hover-aware ----------------------
 // Power dispatches to powerStyle (voltage-graded); every other category to its
 // single colour. Registered in `graded` so a zoom-band change restyles it.
 function subLayer(cat, feats){
   const isPower = cat==='power';
   const lineStyle = isPower ? powerStyle : catStyle(cat);
   const ptStyle   = isPower ? powerStyle : catPointStyle(cat);
+  const renderer=vectorCanvas();
   const lyr = L.geoJSON({type:'FeatureCollection',features:feats},{
+    renderer,
     style:lineStyle,
-    pointToLayer:(f,ll)=>L.circleMarker(ll,ptStyle(f)),
+    pointToLayer:(f,ll)=>L.circleMarker(ll,Object.assign({renderer},ptStyle(f))),
     onEachFeature:(f,l)=>{
       bindHover(cat,f,l, ff=>/Point/.test(ff.geometry&&ff.geometry.type||'')?ptStyle(ff):lineStyle(ff));
       l.on('click',e=>{
@@ -740,10 +752,13 @@ function subLayer(cat, feats){
         L.popup({className:'tt'}).setLatLng(ll).setContent(pop(f.properties,ll.lat,ll.lng)).openOn(map);});
     },
   });
-  graded.push({layer:lyr,cat});
+  const gradeRec={layer:lyr,cat,band:zBand};graded.push(gradeRec);
   // a layer switched on after a zoom change is still carrying the old band's
   // weights, so bring it up to date as it is added rather than on the next pan
-  lyr.on('add',()=>{ try{ lyr.setStyle(isPower?powerStyle:styleFor.bind(null,cat)); }catch(e){} });
+  lyr.on('add',()=>{
+    if(gradeRec.band===zBand)return;
+    try{lyr.setStyle(isPower?powerStyle:styleFor.bind(null,cat));gradeRec.band=zBand;}catch(e){}
+  });
   return lyr;
 }
 
@@ -775,11 +790,13 @@ const psPolyStyle=f=>({color:KV[1].c,weight:W(1),opacity:.75,fillColor:KV[1].c,
 function psLayer(feats){
   // the plant footprint stays, drawn faintly, with the badge at its centre: the
   // badge is what you find at a wide zoom, the outline is the extent up close
+  const renderer=vectorCanvas();
   const lyr=L.geoJSON({type:'FeatureCollection',features:feats},{
+    renderer,
     style:psPolyStyle,
     pointToLayer:(f,ll)=>f.properties&&f.properties._ps
       ? L.marker(ll,{icon:psIcon(f),keyboard:false,riseOnHover:true})
-      : L.circleMarker(ll,{radius:Math.max(3,5*Math.min(1.2,zMul)),color:'#fff',weight:1.5,
+      : L.circleMarker(ll,{renderer,radius:Math.max(3,5*Math.min(1.2,zMul)),color:'#fff',weight:1.5,
                            fillColor:KV[1].c,fillOpacity:1}),
     onEachFeature:(f,l)=>{
       if(!(f.properties||{})._ps) bindHover('power',f,l,psPolyStyle);
@@ -808,7 +825,7 @@ function psLayer(feats){
 //                in view, so they are REAL vectors - crisp at every zoom, exactly
 //                like the other layers. Shown from zoom 16.
 //   transformers 27.6k points from lv_transformers.geojson, fixed-size clickable
-//                markers; only the in-view ones exist. Shown from zoom 14.
+//                markers; only the in-view ones exist. Shown from zoom 15.
 // Cables are coloured by network capacity headroom (RAG).
 const RAGC={r:'#D5392B',a:'#E8A317',g:'#2E9E5B',x:'#9AA0A6'};
 const RAGT={r:'at / near capacity',a:'limited spare capacity',g:'spare capacity',x:'not assessed'};
@@ -816,15 +833,19 @@ const RAGT={r:'at / near capacity',a:'limited spare capacity',g:'spare capacity'
 // web-mercator tile maths for the z14 GeoJSON cable grid
 const lvLon2x=(lon,z)=>Math.floor((lon+180)/360*Math.pow(2,z));
 const lvLat2y=(lat,z)=>{const r=lat*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));};
+function dataWindow(bounds,grid){return{
+  x0:lvLon2x(bounds.getWest(),grid),x1:lvLon2x(bounds.getEast(),grid),
+  y0:lvLat2y(bounds.getNorth(),grid),y1:lvLat2y(bounds.getSouth(),grid)};}
+const windowCovers=(have,want)=>have&&want&&want.x0>=have.x0&&want.x1<=have.x1
+  &&want.y0>=have.y0&&want.y1<=have.y1;
 const LV_GRID=14, LV_MINZOOM=16, LV_MAXCACHE=80;
 const LV_PLAIN='#22B8D9';                  // default: cables in one colour
 let lvByCapacity=true;                      // toggle: colour cables by RAG capacity (default on)
 function lvCableStyle(f){return{color:lvByCapacity?(RAGC[f.properties.rag]||RAGC.x):LV_PLAIN,
   weight:W(1.35),opacity:.9,lineCap:'round'};}
 function setLvCapacity(on){lvByCapacity=on; if(lvCableLayer)lvCableLayer.setStyle(lvCableStyle);}
-gradedHooks.push(()=>{ if(lvCableLayer) try{ lvCableLayer.setStyle(lvCableStyle); }catch(e){} });
 const lvTileCache=new Map();
-let lvCableLayer=null, lvRenderToken=0, lvLastSig='';
+let lvCableLayer=null, lvRenderToken=0, lvLastWindow=null;
 function lvCablePopup(e,p){
   L.popup({className:'tt'}).setLatLng(e.latlng).setContent(card({
     color:lvByCapacity?(RAGC[p.rag]||RAGC.x):LV_PLAIN, icon:ICON.lv,
@@ -842,63 +863,77 @@ async function lvFetchTile(x,y){
   return fc;
 }
 async function renderLvCables(){
-  if(!map.hasLayer(lvNetwork)||map.getZoom()<LV_MINZOOM){ if(lvCableLayer)lvCableLayer.clearLayers(); return; }
+  if(!map.hasLayer(lvNetwork)||map.getZoom()<LV_MINZOOM){
+    if(lvCableLayer&&lvCableLayer.getLayers().length)lvCableLayer.clearLayers();
+    lvLastWindow=null; return;
+  }
   const token=++lvRenderToken;
   const b=map.getBounds().pad(0.2), z=LV_GRID;
-  const x0=lvLon2x(b.getWest(),z),x1=lvLon2x(b.getEast(),z),y0=lvLat2y(b.getNorth(),z),y1=lvLat2y(b.getSouth(),z);
-  // the rendered set is fully determined by the z14 tile window; identical window => nothing to redraw.
-  // (do NOT add per-feature viewport filtering below without folding it into sig)
-  const sig=x0+':'+x1+':'+y0+':'+y1;
-  if(sig===lvLastSig && lvCableLayer && lvCableLayer.getLayers().length) return;
-  lvLastSig=sig;
-  const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(lvFetchTile(x,y));
+  const win=dataWindow(b,z);
+  // Zooming in usually asks for a subset of the window already on the canvas.
+  // Keep it: rebuilding thousands of identical paths just because the viewport
+  // got smaller was the largest source of post-zoom stalls.
+  if(windowCovers(lvLastWindow,win)&&lvCableLayer)return;
+  const reqs=[]; for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(lvFetchTile(x,y));
   const fcs=await Promise.all(reqs);
   if(token!==lvRenderToken) return;            // a newer render superseded this one
   const seen=new Set(), feats=[];
   for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id); feats.push(f); }
   if(!lvCableLayer){
-    // shared (map default) canvas renderer so clicks hit-test across all layers
+    const renderer=vectorCanvas();
     lvCableLayer=L.geoJSON(null,{
+      renderer,
       style:lvCableStyle,
       onEachFeature:(f,l)=>l.on('click',e=>lvCablePopup(e,f.properties))});
     lvNetwork.addLayer(lvCableLayer);
   }
+  lvLastWindow=win;
   lvCableLayer.clearLayers();
   lvCableLayer.addData({type:'FeatureCollection',features:feats});
 }
 
 // Transformers: fixed-size, always-clickable markers. Only the in-view ones exist.
-const lvTx=L.layerGroup();
+const lvTx=L.layerGroup(),lvTxRenderer=vectorCanvas();
 let lvTxData=null, lvTxLoading=false;
 function txPopup(p,lat,lon){return card({
   color:'#D9A400', icon:ICON.sub, kicker:'LV transformer',
   meta:'distribution substation &middot; '+(RAGT[p.rag]||RAGT.x),
   rows:rowsOf([['ref',p.id]]), lat, lon});}
-let lvTxKey=null;   // last-rendered z14 tile window; skip full rebuild when unchanged
+let lvTxWindow=null,lvTxIndex=null;
+function indexLvTx(fc){
+  const idx=new Map();
+  for(const f of (fc&&fc.features)||[]){const c=f.geometry.coordinates;
+    const k=lvLon2x(c[0],LV_GRID)+'/'+lvLat2y(c[1],LV_GRID);
+    if(!idx.has(k))idx.set(k,[]);idx.get(k).push(f);}
+  return idx;
+}
 function renderLvTx(){
-  if(!lvTxData||!map.hasLayer(lvNetwork)||map.getZoom()<14){ if(lvTx.getLayers().length) lvTx.clearLayers(); lvTxKey=null; return; }
+  if(!lvTxData||!map.hasLayer(lvNetwork)||map.getZoom()<15){
+    if(lvTx.getLayers().length)lvTx.clearLayers();lvTxWindow=null;return;}
   const b=map.getBounds().pad(0.25), z=LV_GRID;
-  const x0=lvLon2x(b.getWest(),z),x1=lvLon2x(b.getEast(),z),y0=lvLat2y(b.getNorth(),z),y1=lvLat2y(b.getSouth(),z);
-  const key=x0+':'+x1+':'+y0+':'+y1;
-  if(key===lvTxKey && lvTx.getLayers().length) return;   // same window already drawn
-  lvTxKey=key; lvTx.clearLayers();
-  for(const f of lvTxData.features){
-    const c=f.geometry.coordinates;            // [lng,lat]
-    if(!b.contains([c[1],c[0]])) continue;
-    L.circleMarker([c[1],c[0]],{radius:5,color:'#3A2E00',weight:1.5,fillColor:'#FFC400',fillOpacity:1})
-      .bindPopup(txPopup(f.properties||{},c[1],c[0]),{className:'tt'}).addTo(lvTx);
-  }
+  const win=dataWindow(b,z);
+  if(windowCovers(lvTxWindow,win))return;
+  lvTxWindow=win;lvTx.clearLayers();
+  for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)
+    for(const f of (lvTxIndex&&lvTxIndex.get(x+'/'+y))||[]){
+      const c=f.geometry.coordinates;if(!b.contains([c[1],c[0]]))continue;
+      L.circleMarker([c[1],c[0]],{renderer:lvTxRenderer,radius:5,color:'#3A2E00',weight:1.5,fillColor:'#FFC400',fillOpacity:1})
+        .bindPopup(txPopup(f.properties||{},c[1],c[0]),{className:'tt'}).addTo(lvTx);
+    }
 }
 function syncLvTx(){
-  if(!map.hasLayer(lvNetwork)||map.getZoom()<14){ lvTx.clearLayers(); return; }
+  if(!map.hasLayer(lvNetwork)||map.getZoom()<15){ lvTx.clearLayers();lvTxWindow=null;return; }
   if(lvTxData){ renderLvTx(); return; }
   if(lvTxLoading) return; lvTxLoading=true;
-  fetch('lv_transformers.geojson').then(r=>r.json()).then(fc=>{lvTxData=fc;lvTxLoading=false;renderLvTx();}).catch(()=>{lvTxLoading=false;});
+  fetch('lv_transformers.geojson').then(r=>r.json()).then(fc=>{
+    lvTxData=fc;lvTxIndex=indexLvTx(fc);lvTxLoading=false;renderLvTx();
+  }).catch(()=>{lvTxLoading=false;});
 }
 function syncLv(){ syncLvTx(); renderLvCables(); updateLvHint(); }
 const lvNetwork=L.layerGroup([lvTx]);   // cables added lazily into it by renderLvCables
 lvNetwork.on('add',syncLv);
-lvNetwork.on('remove',()=>{ lvTx.clearLayers(); lvTxKey=null; if(lvCableLayer)lvCableLayer.clearLayers(); updateLvHint(); });
+lvNetwork.on('remove',()=>{ lvTx.clearLayers(); lvTxWindow=null;
+  lvLastWindow=null; if(lvCableLayer)lvCableLayer.clearLayers(); updateLvHint(); });
 // ---- Cadent gas distribution network -----------------------------------------
 // Cadent "Gas Pipe Infrastructure - GPI Open" (Open Government Licence v3.0),
 // kept local as z14 GeoJSON tiles exactly like the LV cables. Two viewport-
@@ -979,9 +1014,6 @@ function gasStyle(f){const p=f.properties, svc=isGasSvc(p);
   return{color:col, weight: W(svc?.85:(GAS_WT[p.p]||1.8)), opacity: svc?.85:.92,
          lineCap:'round', lineJoin:'round'};}
 function setGasPressure(on){ gasByPressure=on; for(const r of gasRestyle) r(); }
-// pipes are zoom-graded like every other line, so the same restyle hook the
-// pressure toggle uses is fired on a zoom-band change
-gradedHooks.push(()=>{ for(const r of gasRestyle) r(); });
 function gasPopup(e,p){
   const u=GAS_DU[p.du]!==undefined?GAS_DU[p.du]:'';
   const dia=(p.d!=null&&p.d>0)?(p.d+(u?'&nbsp;'+u:'')):'-';
@@ -1051,15 +1083,16 @@ function clipOutsideMaps(f){
 function gasTileLayer(dir,minzoom,select){
   const group=L.layerGroup();
   layerMinZoom.set(group,minzoom);
-  let layer=null, token=0;
+  let layer=null,token=0,lastWindow=null;
   const tile=(x,y)=>fetchTileJSON('tiles/gasgeo/'+dir+'/'+x+'/'+y+'.json');
   async function render(){
-    if(!map.hasLayer(group)||map.getZoom()<minzoom){ if(layer)layer.clearLayers(); return; }
+    if(!map.hasLayer(group)||map.getZoom()<minzoom){
+      if(layer&&layer.getLayers().length)layer.clearLayers();lastWindow=null;return;}
     const t=++token;
     const b=map.getBounds().pad(0.2), z=GAS_GRID;
-    const x0=lvLon2x(b.getWest(),z),x1=lvLon2x(b.getEast(),z),
-          y0=lvLat2y(b.getNorth(),z),y1=lvLat2y(b.getSouth(),z);
-    const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(tile(x,y));
+    const win=dataWindow(b,z);
+    if(windowCovers(lastWindow,win)&&layer)return;
+    const reqs=[];for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(tile(x,y));
     const fcs=await Promise.all(reqs);
     if(t!==token) return;                        // a newer render superseded this one
     const seen=new Set(), feats=[];
@@ -1067,18 +1100,21 @@ function gasTileLayer(dir,minzoom,select){
       const picked=select?select(f):[f];
       if(Array.isArray(picked))feats.push(...picked); else if(picked)feats.push(f); }
     if(!layer){
+      const renderer=vectorCanvas();
       layer=L.geoJSON(null,{
+        renderer,
         style:gasStyle,
         onEachFeature:(f,l)=>l.on('click',e=>gasPopup(e,f.properties))});
       group.addLayer(layer);
     }
+    lastWindow=win;
     layer.clearLayers();
     layer.addData({type:'FeatureCollection',features:feats});
   }
   gasRenders.push(render);
   gasRestyle.push(()=>{ if(layer) layer.setStyle(gasStyle); });
   group.on('add',()=>{render();updateLvHint();});
-  group.on('remove',()=>{if(layer)layer.clearLayers();updateLvHint();});
+  group.on('remove',()=>{lastWindow=null;if(layer)layer.clearLayers();updateLvHint();});
   return group;
 }
 // (the open-data mains are built per pressure tier further down, by cadentTier)
@@ -1111,15 +1147,9 @@ const gasAgPipeStyle=f=>({color:GAS_AG_COL,weight:W(2.8),opacity:.95,lineCap:'ro
 // else in opts goes to L.geoJSON untouched.
 // Re-apply a group's style function when the zoom band changes, so the lazily
 // loaded whole-file layers grade with zoom like the tiled ones do.
-function gradeGroup(group, style){
-  if(group&&style) gradedHooks.push(()=>{
-    if(!map.hasLayer(group)) return;
-    group.eachLayer(l=>{ if(l.setStyle) try{ l.setStyle(style); }catch(e){} });
-  });
-  return group;
-}
 function lazyGeoJSON(url, opts){
   const {transform, ...gjOpts}=opts||{};
+  if(!gjOpts.renderer)gjOpts.renderer=vectorCanvas();
   const group=L.layerGroup(); let state='idle';
   group.on('add',()=>{
     if(state!=='idle') return; state='loading';
@@ -1226,7 +1256,6 @@ const gasAgPipes=lazyGeoJSON('gas_ag_pipes.geojson',{
       rows:rowsOf([['length',p.len!=null?(p.len+'&nbsp;m'):null],['ref',p.id]]),
       lat:ll.lat, lon:ll.lng})).openOn(map);}); }
 });
-gradeGroup(gasAgPipes, gasAgPipeStyle);
 
 // ---- High-pressure gas transmission (NTS/LTS backbone) -----------------------
 // From OpenStreetMap (usage=transmission), ODbL - the only openly-republishable
@@ -1253,7 +1282,6 @@ const gasTrans=lazyGeoJSON('gas_transmission.geojson',{
       rows:rowsOf([['position',p.ug?'below ground':'above / at surface']]),
       osm:p.osm, osmLabel:p.id, lat:ll.lat, lon:ll.lng})).openOn(map);}); }
 });
-gradeGroup(gasTrans, gasTransStyle);
 
 // ---- LOCAL-ONLY overlays (never published) -----------------------------------
 // Optional private layers driven by local/manifest.json. The entire local/
@@ -1318,41 +1346,38 @@ function localTileLayer(spec,style,base,o){
   const group=L.layerGroup();
   const grid=spec.grid||14, minz=spec.minzoom||14;
   layerMinZoom.set(group,minz);
-  let gj=null, sig=null, token=0;
+  let gj=null,lastWindow=null,token=0;
   const tile=(x,y)=>fetchTileJSON(base+spec.tiles+'/'+x+'/'+y+'.json');
   async function render(){
-    if(!map.hasLayer(group)||map.getZoom()<minz){ if(gj)gj.clearLayers(); sig=null; return; }
+    if(!map.hasLayer(group)||map.getZoom()<minz){
+      if(gj&&gj.getLayers().length)gj.clearLayers();lastWindow=null;return;}
     const t=++token, b=map.getBounds().pad(0.2);
-    const x0=lvLon2x(b.getWest(),grid),x1=lvLon2x(b.getEast(),grid),
-          y0=lvLat2y(b.getNorth(),grid),y1=lvLat2y(b.getSouth(),grid);
-    // as with the LV cables, the drawn set is fully determined by the tile
-    // window: same window => nothing to redraw.
-    const s=x0+':'+x1+':'+y0+':'+y1;
-    if(s===sig&&gj&&gj.getLayers().length) return;
-    sig=s;
-    const reqs=[]; for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)reqs.push(tile(x,y));
+    const win=dataWindow(b,grid);
+    if(windowCovers(lastWindow,win)&&gj)return;
+    const reqs=[];for(let x=win.x0;x<=win.x1;x++)for(let y=win.y0;y<=win.y1;y++)reqs.push(tile(x,y));
     const fcs=await Promise.all(reqs);
     if(t!==token) return;                      // a newer render superseded this one
     const seen=new Set(), feats=[];
     for(const fc of fcs)for(const f of (fc.features||[])){ if(seen.has(f.id))continue; seen.add(f.id);
       if(filter&&!filter(f))continue; feats.push(f); }
     if(!gj){
-      gj=L.geoJSON(null,{style,
-        pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:3,color:'#fff',weight:1,fillColor:style(f).color,fillOpacity:.95}),
+      const renderer=vectorCanvas();
+      gj=L.geoJSON(null,{renderer,style,
+        pointToLayer:(f,ll)=>L.circleMarker(ll,{renderer,radius:3,color:'#fff',weight:1,fillColor:style(f).color,fillOpacity:.95}),
         onEachFeature:(f,l)=>l.on('click',e=>localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),note))});
       group.addLayer(gj);
     }
+    lastWindow=win;
     gj.clearLayers();
     gj.addData({type:'FeatureCollection',features:feats});
   }
   localRenders.push(render);
-  gradedHooks.push(()=>{ if(gj&&map.hasLayer(group)) try{ gj.setStyle(style); }catch(e){} });
   // MAPS tiers opt out of the hint: they sit inside one toggle at staggered
   // zooms on purpose (HP spine wide, LP only close in), so "zoom in to see the
   // LP" would be nagging about intended behaviour, not reporting a fault.
   if(gated) localGated.push({layer:group,minzoom:minz,label:spec.label||'gas layer'});
   group.on('add',()=>{render();updateLvHint();});
-  group.on('remove',()=>{if(gj)gj.clearLayers();sig=null;updateLvHint();});
+  group.on('remove',()=>{if(gj)gj.clearLayers();lastWindow=null;updateLvHint();});
   return group;
 }
 function syncLocal(){ for(const r of localRenders) r(); }
@@ -1375,25 +1400,24 @@ async function fetchManifest(url){
 function tierLayer(spec, base, o){
   const color  = spec.color || GAS_TRANS_COL;
   const weight = spec.weight || 3;
-  // zoom-graded like every other line, and dashed where the source says buried
+  // screen-stable line weight, dashed where the source says buried
   const style  = f => { const w=W(weight);
     return {color, weight:w, opacity:.95, lineCap:'round', lineJoin:'round',
             dashArray: (spec.dash||(f.properties&&f.properties.ug)) ? DASH(w) : null}; };
   return spec.tiles
-    ? localTileLayer(spec, style, base, o)   // registers its own grade hook
-    : gradeGroup(lazyGeoJSON(base+spec.file, {
+    ? localTileLayer(spec, style, base, o)
+    : lazyGeoJSON(base+spec.file, {
         style,
         filter: (o&&o.filter) || undefined,
         pointToLayer: (f,ll)=>L.circleMarker(ll,{radius:4,color:'#fff',weight:1.5,fillColor:color,fillOpacity:.95}),
         onEachFeature: (f,l)=>l.on('click',e=>
           localPopup(spec,f,e.latlng||(l.getLatLng&&l.getLatLng())||map.getCenter(),(o&&o.note)||null))
-      }), style);
+      });
 }
 const isPlantFeature = f => ((f.properties||{}).kind === 'plant');
 
 // The committed MAPS extract. Mains stay keyed by pressure so the four useful
-// network toggles remain independent; plant is retained only where the build
-// associated it with an above-ground installation.
+// network toggles remain independent; ambiguous plant symbols are filtered out.
 async function buildMapsGas(){
   const man = await fetchManifest('tiles/mapsgeo/meta.json');
   const specs = (man&&man.layers||[]).filter(s => s && (s.file||s.tiles));
@@ -1431,17 +1455,27 @@ async function loadTierLayers(base, manifestUrl, opts){
 const loadLocalLayers = () => loadTierLayers('local/','local/manifest.json',
                                 {suffix:' · local', note:'local only, not published', keyPrefix:'local.'});
 
-// one debounced dispatcher for ALL moveend work: collapses wheel-zoom / inertial-pan
-// bursts into a single rebuild (each render's token guard drops any straggler).
-let _mvT; function onMoveEnd(){ clearTimeout(_mvT); _mvT=setTimeout(()=>{ syncLv(); syncGas(); syncLocal(); if(labelsOn) buildLabels(); writeHash(); }, 150); }
-map.on('moveend', onMoveEnd);
+// One debounced post-motion transaction. Previously zoomend rebuilt styles and
+// labels, then moveend rebuilt labels and every viewport layer again. Coalescing
+// both events gives the browser one settled-frame update instead of a visible
+// sequence of partial redraws.
+let _mvT,_zooming=false;
+function syncViewport(){
+  syncLv();syncGas();syncLocal();
+  if(labelsOn)buildLabels();
+  if(labelPane)labelPane.style.visibility='visible';
+  writeHash();
+}
+function scheduleViewportSync(delay=85){clearTimeout(_mvT);_mvT=setTimeout(syncViewport,delay);}
+map.on('moveend',()=>scheduleViewportSync(_zooming?140:85));
 // The LV and gas networks only draw when zoomed in; tell the user so they don't
 // look broken when toggled on from a wide view.
 const lvHint=L.control({position:'bottomleft'});
 let lvHintEl=null;
 function hintText(){
   const z=map.getZoom(), want=[];
-  if(map.hasLayer(lvNetwork)&&z<14) want.push('LV network');
+  if(map.hasLayer(lvNetwork)&&z<15) want.push('LV transformers');
+  else if(map.hasLayer(lvNetwork)&&z<LV_MINZOOM) want.push('LV cables');
   if(map.hasLayer(gasSvc)&&z<GAS_SVC_MINZOOM) want.push('gas services');
   // Tiled local layers are zoom-gated too, and each tier at its own zoom - say
   // which one is waiting rather than leaving a switched-on layer looking broken.
@@ -1717,6 +1751,11 @@ function buildLabels(){
     labelLive.set(key,{tip, ll:v.ll, dir:v.dir});
   }
 }
+let _labelT;
+function scheduleLabels(delay=55){
+  clearTimeout(_labelT);
+  _labelT=setTimeout(()=>{if(labelsOn&&!_zooming)buildLabels();},delay);
+}
 
 // public toggle, wired into the deck as cfg.onLabels
 function setLabels(on){
@@ -1734,12 +1773,14 @@ function setLabels(on){
 // appear to fly across the map even when their final anchor is stable. Hide the
 // dedicated label pane for the brief animation, rebuild at the destination and
 // reveal it only once every label is in its final place.
-map.on('zoomstart',()=>{ if(labelPane) labelPane.style.visibility='hidden'; });
+map.on('zoomstart',()=>{
+  _zooming=true;clearTimeout(_mvT);
+  if(labelPane)labelPane.style.visibility='hidden';
+});
 // A zoom change alters every stroke weight and every label gate, so both have to
 // re-run; regrade() first, since the labels measure the marker radii it sets.
 map.on('zoomend',()=>{
-  regrade(); if(labelsOn) buildLabels();
-  if(labelPane) labelPane.style.visibility='visible';
+  _zooming=false;regrade();scheduleViewportSync(70);
 });
 
 // ============================================================================
@@ -2227,10 +2268,10 @@ async function initData(fc){
     .forEach(k => registerLabels(sub[k], siteLabelOf(k.split('.')[0])));
 
   // ---- every layer starts OFF; the deck adds them on demand. ----
-  // Labels belong to the layers they name, so rebuild them the moment one is
-  // switched on or off rather than waiting for a pan.
+  // Several layers can change in one group click/hash restore. Debounce their
+  // labels into one placement pass instead of rebuilding after every child.
   Object.keys(sub).forEach(k => sub[k] &&
-    sub[k].on('add remove', () => { if(labelsOn) buildLabels(); }));
+    sub[k].on('add remove', () => scheduleLabels()));
 
   // ---- runtime extra_infra merge: route each feature into its SUB-layer ----
   const _extraIds=new Set(data.features.filter(f=>!isEmbeddedPlant(f)).map(f=>f.properties.id));
@@ -2251,7 +2292,7 @@ async function initData(fc){
     }
     labelVer++;                                    // membership changed: drop label caches
     buildSearchIndex();
-    if(labelsOn) buildLabels();
+    scheduleLabels();
   }).catch(()=>{});
 
 // The gas drawer is organised by PRESSURE, because that is the question people
@@ -2274,8 +2315,10 @@ const cadentTier = (...codes) =>
   gasTileLayer('main', GAS_MAIN_MINZOOM, f => codes.includes((f.properties||{}).p)
     ? clipOutsideMaps(f) : []);
 
-const gasHigh  = grp(mt.HPN, mt.HPL, cadentTier('HP'), gasTrans, sub['gas.pipe']);
-const gasInter = grp(mt.IP,  cadentTier('IP'));
+// GPI Open contains LP/MP only. Creating Cadent HP/IP layers made those toggles
+// fetch and scan the same tile tree merely to return zero features.
+const gasHigh  = grp(mt.HPN, mt.HPL, gasTrans, sub['gas.pipe']);
+const gasInter = grp(mt.IP);
 const gasMed   = grp(mt.MP,  cadentTier('MP'));
 const gasLow   = grp(mt.LP,  cadentTier('LP','UN'));
 const gasPressureLayers = [gasHigh, gasInter, gasMed, gasLow].filter(Boolean);
@@ -2378,11 +2421,15 @@ new LeafLayerDeck({
               style:{KV,kvOf,powerStyle,zoom:()=>({zMul,zBand})}};
 
   buildSearchIndex();
-  buildLabels();
   // the deck panel is an exclusion zone for labels, so re-place them once it has
   // actually been laid out and has a measurable width
-  setTimeout(()=>{ if(labelsOn) buildLabels(); },60);
-  map.on('layeradd layerremove', ()=>{ clearTimeout(_hashT); _hashT=setTimeout(writeHash,220); });
+  scheduleLabels(80);
+  // Track only user-facing overlay groups. Listening on the map itself also
+  // receives layeradd/layerremove for every GeoJSON path, so one tile refresh
+  // used to schedule thousands of redundant hash writes.
+  for(const l of new Set(layerRegistry.values())) l.on('add remove',()=>{
+    clearTimeout(_hashT);_hashT=setTimeout(writeHash,180);
+  });
   writeHash();
 
   // data + layers are in: drop the loading overlay. Deliberately a timer and not

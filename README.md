@@ -27,9 +27,9 @@ reds. The key lives in the Power drawer.
 **Solid = overground, dashed = underground.** Dash lengths scale with the stroke,
 so a heavy buried cable reads as a dashed line rather than a row of beads.
 
-Weights and marker sizes are graded by zoom: a stroke that is right in a street
-is a solid blob across a region, so every weight is quoted for zoom 13 and
-scaled from there. Structure that is noise at a regional view is held back until
+Line weights stay stable in screen pixels while marker size and visibility are
+graded by zoom, avoiding expensive whole-network redraws during navigation.
+Structure that is noise at a regional view is held back until
 it means something — pylons from z13 and switches from z15. Power stations can
 still orient a regional view, but substation names are deliberately local detail:
 transmission sites appear from z14, 132 kV from z15, primary distribution from
@@ -105,7 +105,7 @@ gives the infrastructure a quiet canvas and still lets the place names read.
 | **Oil & chemicals** | Oil/fuel/ethylene/petrochemical pipelines (NWEP/RSEP/TPEP, Stanlow), tank farms (Stanlow/Tranmere/Eastham) and works chimneys |
 
 The **LV network** is the real distribution low-voltage network from SP Energy
-Networks (not OSM). Transformers appear from zoom 14 and cables from **zoom 16**
+Networks (not OSM). Transformers appear from zoom 15 and cables from **zoom 16**
 (street level) — there is far too much to show region-wide. The ~1.47M source
 cable segments are merged into continuous polylines and drawn as real,
 full-precision vectors for the current viewport, so they stay crisp at every
