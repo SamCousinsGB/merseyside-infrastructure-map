@@ -43,22 +43,81 @@ generation-source badge — wind, solar, battery, hydro, nuclear, gas, biomass,
 coal, waste — sized by output, because a 348 MW wind farm and a gas CCGT are not
 the same object.
 
-**Labels** are placed, not just attached: power, site and AGI candidates are
-limited to the current viewport and deduped by name (OSM
-splits one 132 kV circuit into dozens of ways, all carrying the same name),
-sorted by importance, then placed greedily — measured, tried right/left/above/
-below, and dropped if all four positions collide with something already placed
-or with the UI panels. So a 1380 MW station never loses its label to an 11 kV
-pole-mount. Hovering anything thickens it and shows a one-line readout; clicking
-opens a card with the record and Street View / Maps links.
+**Labels and overlap.** MapLibre collision detection places infrastructure names
+and vector basemap names together. Major plants have priority; minor substations
+and their labels appear only when zoomed in. Areas are drawn below lines, then
+markers and labels, regardless of the order in which datasets load. Clicking a
+busy point opens a selector for the distinct features there; multiple draw layers
+for the same asset do not create duplicate choices.
+
+## Background maps and filters
+
+Light and Dark use [OpenFreeMap](https://openfreemap.org/quick_start/) vector tiles,
+with style definitions saved locally in `basemaps.js`. Street uses OpenStreetMap,
+Satellite uses the existing Esri World Imagery service, and Topo uses OpenTopoMap.
+None of these choices asks for an API key or account. Provider attribution remains
+visible. Upstream copyright and design credits are retained in [BASEMAP-LICENSES.md](BASEMAP-LICENSES.md). Dark place labels have increased contrast. Two vector-source failures
+switch to Street with a visible explanation.
+
+Group headings expand their layers. The separate group checkbox selects all or
+clears all; its mixed state means only some children are selected. Every group
+shows its selected count. The layer search filters these controls, while the
+site search finds named infrastructure. Zoom requirements appear beside layers.
+Clear all is preserved in shared map links, including after reloading. On phones
+the panel is a collapsible bottom drawer.
+
+## Data quality and overlap
+
+The 10 September 2026 update retains the existing geometry and 24,007 vector tiles.
+It improves how these sources are combined:
+
+- Merge matching OSM IDs while retaining useful tags from both extracts. The
+  9,909 input features become 9,701 unique records (208 repeated entries removed).
+- Remove 54 OSM transmission records from the general gas overlay. The dedicated
+  high-pressure layer draws MAPS mains within its covered region and clips OSM
+  fallback routes to the outside, using the same boundary rule as Cadent mains.
+  The boundary is the saved MAPS extent, not a guarantee of survey completeness.
+- Keep unknown-pressure OSM and Cadent pipes separate from high- and low-pressure
+  mains. Gas storage tanks, gas holders, industrial chimneys and fuel tanks have
+  distinct filters. Aviation fuel is not classified as gas. Weirs belong to sites.
+- Merge plant-source details before choosing generation symbols, and convert W,
+  kW, MW and GW correctly. Plant polygons and their marker share one popup identity.
+- Give Cadent gas sites stable asset IDs. Keep MAPS surveyed site outlines while
+  suppressing duplicate site markers where the existing data marks a Cadent match.
+
+`plant_details.json` checks metadata for all 140 already-mapped power plants
+against the public OSM API on 10 September 2026. 136 match a current `power=plant`
+record; their current names, operators, generation sources and outputs are used.
+Four older derived entries no longer have a plant tag on the referenced object.
+Their existing details are retained and explicitly marked as legacy in the popup.
+This is a metadata refresh, not a claim of new geometry or complete coverage.
+The broad Overpass refresh was unavailable during this update.
+
+Existing datasets remain snapshots with different extents and survey dates.
+SP Manweb capacity colours describe the saved extract, not live spare capacity.
+Individual MAPS survey dates remain visible in popups. Missing pressure or capacity
+is not presented as a measured value. Dataset-load failures are shown and can be
+retried by toggling the affected layer.
+
+Build-time maintenance:
+
+```sh
+npm ci
+npm test
+npm run build-basemaps
+npm run refresh-plants
+```
+
+The refresh only requests known OSM object IDs, strips editor/account fields, and
+writes the snapshot after every batch succeeds. `map-data.js` contains shared
+classification, metadata merging, source clipping and popup deduplication rules;
+the tile builder and browser use the same clipping function.
 
 ## Layers
 
-A custom control (top-right) groups the layers, switches basemaps and searches.
-**Power** is an expandable group holding the **HV** and **LV** electricity
-networks; the other utilities and transport toggle individually. Tapping a
-group's row toggles the whole group; the chevron expands it for the individual
-layers.
+The filter panel groups infrastructure by utility. Group headings expand the
+available layers; the separate checkboxes control visibility. Power includes HV,
+power stations and LV; gas has separate pressure tiers and asset types.
 
 The map opens with the **HV network** and **Power stations** on — they are
 already-loaded local data, so showing them costs no extra requests, and an empty
@@ -453,4 +512,4 @@ carries.
 - LV network data © [SP Energy Networks](https://www.spenergynetworks.co.uk/),
   via their ConnectMore interactive map. Reproduced here for personal,
   non-commercial reference; subject to SP Energy Networks' terms of use.
-- Basemap tiles © Esri / Maxar (imagery), © CARTO, © OpenTopoMap (CC-BY-SA).
+- Basemap tiles © Esri / Maxar (imagery), OpenFreeMap / OpenMapTiles / OpenStreetMap, © OpenTopoMap (CC-BY-SA).

@@ -4,30 +4,10 @@ import geojsonvt from 'geojson-vt';
 import vtpbf from 'vt-pbf';
 
 const ROOT=path.resolve('.'),OUT=path.join(ROOT,'tiles','mvt');
-const MAPS_BOUNDS=[-3.198587,53.134005,-2.301016,53.694087];
+import dataUtils from './map-data.js';
+const {clipOutside}=dataUtils;
 const only=(process.argv.find(a=>a.startsWith('--only='))||'').split('=')[1];
 
-const same=(a,b)=>a&&b&&Math.abs(a[0]-b[0])<1e-10&&Math.abs(a[1]-b[1])<1e-10;
-const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
-function outsideLine(line){
-  const[xmin,ymin,xmax,ymax]=MAPS_BOUNDS,parts=[];let cur=null;
-  const flush=()=>{if(cur&&cur.length>1)parts.push(cur);cur=null};
-  const add=(a,b)=>{if(!cur)cur=[a,b];else if(same(cur[cur.length-1],a)){if(!same(cur[cur.length-1],b))cur.push(b)}else{flush();cur=[a,b]}};
-  for(let i=1;i<line.length;i++){
-    const a=line[i-1],b=line[i],dx=b[0]-a[0],dy=b[1]-a[1],ts=[0,1];
-    const cut=t=>{if(t>1e-10&&t<1-1e-10)ts.push(t)};
-    if(dx){cut((xmin-a[0])/dx);cut((xmax-a[0])/dx)}if(dy){cut((ymin-a[1])/dy);cut((ymax-a[1])/dy)}
-    ts.sort((x,y)=>x-y);const cuts=ts.filter((t,j)=>!j||Math.abs(t-ts[j-1])>1e-10);
-    for(let j=1;j<cuts.length;j++){const t0=cuts[j-1],t1=cuts[j],m=lerp(a,b,(t0+t1)/2);
-      if(m[0]<xmin||m[0]>xmax||m[1]<ymin||m[1]>ymax)add(lerp(a,b,t0),lerp(a,b,t1));else flush()}
-  }
-  flush();return parts;
-}
-function clipOutside(f){
-  const g=f.geometry||{},lines=g.type==='LineString'?[g.coordinates]:g.type==='MultiLineString'?g.coordinates:[];
-  if(!lines.length)return[f];const parts=lines.flatMap(outsideLine),id=String(f.id??'main');
-  return parts.map((coordinates,i)=>({...f,id:id+':outside:'+i,geometry:{type:'LineString',coordinates}}));
-}
 const mapsTier=tier=>f=>(f.properties||{}).kind==='main'&&String((f.properties||{}).pressure).toUpperCase()===tier?[f]:[];
 const cadentMain=f=>clipOutside(f);
 const identity=f=>[f];

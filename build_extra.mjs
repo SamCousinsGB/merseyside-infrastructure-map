@@ -100,6 +100,7 @@ const pipeN = out.length;
 const INDUSTRIAL_CONTENT = /oil|fuel|diesel|kerosene|petrol|lpg|gas|chemical|jet|avgas|oxygen|ethylene|naphtha|bitumen/i;
 function tankCat(content) {
   const c = (content || "").toLowerCase();
+  if (/avgas|gasoline/.test(c)) return ["fuel", `${content} tank`];
   if (/gas|lpg|propane|butane/.test(c)) return ["gas", content ? `${content} tank` : "gas tank"];
   if (/^(water|potable|raw_water|treated_water)$/.test(c)) return ["water", "water tank"];
   if (/sewage|wastewater|sludge|slurry|manure|effluent|digestate/.test(c)) return ["sewage", `${content} tank`];

@@ -12,7 +12,9 @@
     "merge-gas": "node --max-old-space-size=10240 merge_gas.mjs",
     "build-gas-tiles": "node --max-old-space-size=10240 build_gas_tiles.mjs",
     "build-mvt": "node --max-old-space-size=8192 build_mvt_tiles.mjs",
-    "test": "node test_map.js index.html"
+    "build-basemaps": "node build_basemaps.mjs",
+    "refresh-plants": "node refresh_plant_details.mjs",
+    "test": "node test_map.js index.html && node --test test_data.js"
   },
   "devDependencies": {
     "geojson-vt": "^4.0.3",
